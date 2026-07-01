@@ -44,7 +44,7 @@ class Users extends BaseController
 
     public function store(): RedirectResponse
     {
-        $result = $this->users->createEmployee($this->request->getPost());
+        $result = $this->users->createUser($this->request->getPost());
 
         if ($result['ok']) {
             return redirect()->to('/users')->with('success', $result['message']);

@@ -47,12 +47,16 @@ class UserManagementService
      *
      * @return array{ok: bool, message: string, errors?: array<string, string>}
      */
-    public function createEmployee(array $input): array
+    public function createUser(array $input): array
     {
         $rules = $this->validationRules();
         $rules['password_confirm'] = [
             'label' => 'Confirm password',
             'rules' => 'required|matches[password]',
+        ];
+        $rules['role'] = [
+            'label' => 'Role',
+            'rules' => 'required|in_list[admin,employee]',
         ];
 
         $validation = service('validation');
@@ -67,6 +71,7 @@ class UserManagementService
         }
 
         $username = trim((string) ($input['username'] ?? ''));
+        $role     = (string) ($input['role'] ?? 'employee');
 
         $user = new User([
             'username'   => $username,
@@ -94,11 +99,13 @@ class UserManagementService
             ];
         }
 
-        $saved->addGroup('employee');
+        $saved->addGroup($role);
+
+        $roleLabel = $role === 'admin' ? 'Admin' : 'Employee';
 
         return [
             'ok'      => true,
-            'message' => sprintf('Employee account created for %s.', $saved->username ?? $saved->getEmail()),
+            'message' => sprintf('%s account created for %s.', $roleLabel, $saved->username ?? $saved->getEmail()),
         ];
     }
 

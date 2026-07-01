@@ -17,7 +17,7 @@
             <!--end::Messages Dropdown Menu-->
 
             <!--begin::Notifications Dropdown Menu-->
-            <li class="nav-item dropdown">
+            <!-- <li class="nav-item dropdown">
               <a class="nav-link" data-bs-toggle="dropdown" href="#">
                 <i class="bi bi-bell-fill"></i>
                 <span class="navbar-badge badge text-bg-warning">15</span>
@@ -42,7 +42,7 @@
                 <div class="dropdown-divider"></div>
                 <a href="#" class="dropdown-item dropdown-footer"> See All Notifications </a>
               </div>
-            </li>
+            </li> -->
             <!--end::Notifications Dropdown Menu-->
 
             <!--begin::User Menu Dropdown-->

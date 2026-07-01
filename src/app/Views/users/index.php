@@ -7,11 +7,11 @@
         <div class="row mb-2 align-items-center">
             <div class="col-sm-6">
                 <h1 class="m-0">Users</h1>
-                <p class="text-muted small mb-0">Create and manage employee accounts</p>
+                <p class="text-muted small mb-0">Create and manage user accounts</p>
             </div>
             <div class="col-sm-6 text-sm-end mt-2 mt-sm-0">
                 <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#create-user-modal">
-                    <i class="bi bi-person-plus"></i> Create Employee
+                    <i class="bi bi-person-plus"></i> Create User
                 </button>
             </div>
         </div>
@@ -105,7 +105,7 @@
             <form method="post" action="<?= site_url('users') ?>">
                 <?= csrf_field() ?>
                 <div class="modal-header">
-                    <h5 class="modal-title" id="create-user-modal-label">Create Employee</h5>
+                    <h5 class="modal-title" id="create-user-modal-label">Create User</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
@@ -139,6 +139,18 @@
                     </div>
 
                     <div class="mb-3">
+                        <label for="role" class="form-label">Role</label>
+                        <select class="form-select<?= isset($errors['role']) ? ' is-invalid' : '' ?>" id="role" name="role" required>
+                            <option value="employee" <?= old('role', 'employee') === 'employee' ? 'selected' : '' ?>>Employee</option>
+                            <option value="admin" <?= old('role') === 'admin' ? 'selected' : '' ?>>Admin</option>
+                        </select>
+                        <?php if (isset($errors['role'])) : ?>
+                            <div class="invalid-feedback"><?= esc($errors['role']) ?></div>
+                        <?php endif ?>
+                        <div class="form-text">Admins can manage users and access all features.</div>
+                    </div>
+
+                    <div class="mb-3">
                         <label for="password" class="form-label">Password</label>
                         <input type="password" class="form-control<?= isset($errors['password']) ? ' is-invalid' : '' ?>" id="password" name="password" required>
                         <?php if (isset($errors['password'])) : ?>
@@ -156,7 +168,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Create Employee</button>
+                    <button type="submit" class="btn btn-primary">Create User</button>
                 </div>
             </form>
         </div>

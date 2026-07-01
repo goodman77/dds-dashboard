@@ -16,7 +16,7 @@ class AuthGroups extends ShieldAuthGroups
     public array $groups = [
         'admin' => [
             'title'       => 'Admin',
-            'description' => 'Full access and can manage employee accounts.',
+            'description' => 'Full access and can manage user accounts.',
         ],
         'employee' => [
             'title'       => 'Employee',
@@ -26,7 +26,7 @@ class AuthGroups extends ShieldAuthGroups
 
     public array $permissions = [
         'admin.access'  => 'Can access the admin dashboard',
-        'users.create'  => 'Can create employee users',
+        'users.create'  => 'Can create users',
         'users.manage'  => 'Can view and manage users',
     ];
 
