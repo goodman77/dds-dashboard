@@ -19,6 +19,9 @@
                 <button type="button" class="btn btn-primary btn-sm" id="sheets-sync-btn" data-bs-toggle="modal" data-bs-target="#import-sheets-modal">
                     <i class="bi bi-arrow-repeat"></i> Import from Google Sheets
                 </button>
+                <button type="button" class="btn btn-warning btn-sm" id="qty-sync-btn" data-bs-toggle="modal" data-bs-target="#qty-sync-modal">
+                    <i class="bi bi-cloud-download"></i> Qty Sync
+                </button>
             </div>
         </div>
     </div>
@@ -72,6 +75,41 @@
         <div id="import-complete-panel" class="alert alert-success alert-dismissible fade show d-none" role="alert">
             <strong id="import-complete-title">Import finished.</strong>
             <div id="import-complete-message" class="mb-0"></div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+
+        <div id="qty-sync-status-panel" class="alert alert-warning d-none">
+            <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <strong id="qty-sync-status-title">Net32 quantity sync running...</strong>
+                    <span id="qty-sync-status-badge" class="badge text-bg-warning">running</span>
+                </div>
+                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="qty-sync-cancel-btn">
+                    <i class="bi bi-x-circle"></i> Cancel Sync
+                </button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span id="qty-sync-progress-label" class="small fw-semibold">0%</span>
+                <span id="qty-sync-progress-remaining" class="small text-muted"></span>
+            </div>
+            <div class="progress mb-2" style="height: 1.25rem;" aria-label="Net32 quantity sync progress">
+                <div
+                    id="qty-sync-progress-bar"
+                    class="progress-bar progress-bar-striped progress-bar-animated bg-warning"
+                    role="progressbar"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="0"
+                    style="width: 0%"
+                ></div>
+            </div>
+            <div id="qty-sync-status-counts" class="small fw-semibold mb-1"></div>
+            <div id="qty-sync-status-message" class="small mb-0 text-muted"></div>
+        </div>
+
+        <div id="qty-sync-complete-panel" class="alert alert-success alert-dismissible fade show d-none" role="alert">
+            <strong id="qty-sync-complete-title">Quantity sync finished.</strong>
+            <div id="qty-sync-complete-message" class="mb-0"></div>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
 
@@ -274,6 +312,38 @@
     </div>
 </div>
 
+<div class="modal fade" id="qty-sync-modal" tabindex="-1" aria-labelledby="qty-sync-modal-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="<?= site_url('inventory/qty-sync') ?>" method="post" id="qty-sync-form">
+                <?= csrf_field() ?>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="qty-sync-modal-label">Net32 QTY Sync</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Checks every SKU on the selected sheet tab against Net32 and updates local quantities. Runs in the background — progress appears below and on the <a href="<?= site_url('logs') ?>">Logs</a> page.</p>
+                    <div class="mb-0">
+                        <label for="qty-sync-sheet-name" class="form-label">Sheet tab</label>
+                        <select class="form-select" name="sheet_name" id="qty-sync-sheet-name" required>
+                            <option value="">Choose a sheet...</option>
+                            <?php foreach ($sheetNames as $name) : ?>
+                                <option value="<?= esc($name) ?>"><?= esc($name) ?></option>
+                            <?php endforeach ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-warning" id="qty-sync-submit">
+                        <i class="bi bi-cloud-download"></i> Start QTY Sync
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="inventory-form-modal" tabindex="-1" aria-labelledby="inventory-form-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -352,11 +422,15 @@
 
 <script>
 const importInitialStatus = <?= json_encode($importJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+const qtySyncInitialStatus = <?= json_encode($qtySyncJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const importStatusUrl = <?= json_encode(site_url('inventory/import-status')) ?>;
+const qtySyncStatusUrl = <?= json_encode(site_url('inventory/qty-sync-status')) ?>;
 const importCancelUrl = <?= json_encode(site_url('inventory/import/cancel')) ?>;
+const qtySyncCancelUrl = <?= json_encode(site_url('inventory/qty-sync/cancel')) ?>;
 const importCsrfName = <?= json_encode(csrf_token()) ?>;
 const importCsrfHash = <?= json_encode(csrf_hash()) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
+const qtySyncJobIdFromUrl = <?= json_encode((int) ($qtySyncJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
 const inventoryValidateUrl = <?= json_encode(site_url('inventory/validate')) ?>;
 const inventorySheetNames = <?= json_encode(array_values($sheetNames), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
@@ -871,6 +945,13 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Starting...';
 });
 
+document.getElementById('qty-sync-form')?.addEventListener('submit', function () {
+    const btn = document.getElementById('qty-sync-submit');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Starting...';
+});
+
 (function () {
     const panel = document.getElementById('import-status-panel');
     const completePanel = document.getElementById('import-complete-panel');
@@ -1076,6 +1157,8 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         const selectedFilter = filterSelect?.value || '';
         const importSelect = document.getElementById('import-sheet-name');
         const selectedImport = importSelect?.value || '';
+        const qtySyncSelect = document.getElementById('qty-sync-sheet-name');
+        const selectedQtySync = qtySyncSelect?.value || '';
         const datalist = document.getElementById('inventory-sheet-options');
 
         if (filterSelect) {
@@ -1101,6 +1184,19 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
                     option.selected = true;
                 }
                 importSelect.appendChild(option);
+            });
+        }
+
+        if (qtySyncSelect) {
+            qtySyncSelect.innerHTML = '<option value="">Choose a sheet...</option>';
+            names.forEach(function (name) {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                if (name === selectedQtySync) {
+                    option.selected = true;
+                }
+                qtySyncSelect.appendChild(option);
             });
         }
 
@@ -1232,6 +1328,327 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         const finishedAt = new Date(String(importInitialStatus.finished_at).replace(' ', 'T'));
         if (!Number.isNaN(finishedAt.getTime()) && (Date.now() - finishedAt.getTime()) < 15000) {
             showComplete(importInitialStatus);
+        }
+    }
+})();
+</script>
+
+<script>
+(function () {
+    const panel = document.getElementById('qty-sync-status-panel');
+    const completePanel = document.getElementById('qty-sync-complete-panel');
+    const progressBar = document.getElementById('qty-sync-progress-bar');
+    const progressLabel = document.getElementById('qty-sync-progress-label');
+    const progressRemaining = document.getElementById('qty-sync-progress-remaining');
+    const statusBadge = document.getElementById('qty-sync-status-badge');
+    const statusCounts = document.getElementById('qty-sync-status-counts');
+    const statusMessage = document.getElementById('qty-sync-status-message');
+    const completeMessage = document.getElementById('qty-sync-complete-message');
+    const completeTitle = document.getElementById('qty-sync-complete-title');
+    const qtySyncBtn = document.getElementById('qty-sync-btn');
+    const qtySyncSubmit = document.getElementById('qty-sync-submit');
+    const qtySyncCancelBtn = document.getElementById('qty-sync-cancel-btn');
+    let pollTimer = null;
+    let cancelRequested = false;
+    let activeJobId = qtySyncJobIdFromUrl > 0
+        ? qtySyncJobIdFromUrl
+        : (qtySyncInitialStatus?.job_id ?? null);
+
+    function setQtySyncControlsDisabled(disabled) {
+        if (qtySyncBtn) qtySyncBtn.disabled = disabled;
+        if (qtySyncSubmit) qtySyncSubmit.disabled = disabled;
+    }
+
+    function setCancelButtonState(status) {
+        if (!qtySyncCancelBtn) {
+            return;
+        }
+
+        const canCancel = !!status?.can_cancel && !cancelRequested;
+        const forceStop = !!status?.cancel_requested || cancelRequested;
+        qtySyncCancelBtn.classList.toggle('d-none', !status?.is_active);
+        qtySyncCancelBtn.disabled = !status?.is_active || (!canCancel && !forceStop);
+        qtySyncCancelBtn.dataset.forceStop = forceStop ? '1' : '0';
+
+        if (forceStop) {
+            qtySyncCancelBtn.innerHTML = '<i class="bi bi-x-octagon"></i> Force Stop Sync';
+        } else {
+            qtySyncCancelBtn.innerHTML = '<i class="bi bi-x-circle"></i> Cancel Sync';
+        }
+    }
+
+    function resolveQtySyncAlertClass(status) {
+        if (status === 'completed') {
+            return 'success';
+        }
+
+        if (status === 'cancelled') {
+            return 'warning';
+        }
+
+        return 'danger';
+    }
+
+    function resolveQtySyncBadgeClass(status) {
+        if (status === 'failed') {
+            return 'danger';
+        }
+
+        if (status === 'completed') {
+            return 'success';
+        }
+
+        if (status === 'cancelled') {
+            return 'secondary';
+        }
+
+        if (status === 'queued') {
+            return 'info';
+        }
+
+        return 'warning';
+    }
+
+    function resolveQtySyncProgress(status) {
+        const total = Number(status.total) || 0;
+        const processed = Number(status.processed) || 0;
+
+        if (total <= 0) {
+            return {
+                completePercent: 0,
+                remainingPercent: 100,
+                label: status.status === 'queued' ? 'Preparing quantity sync...' : 'Starting Net32 checks...',
+            };
+        }
+
+        let completePercent = status.percent;
+
+        if (completePercent === null || completePercent === undefined) {
+            completePercent = Math.floor((processed / total) * 100);
+        }
+
+        if (processed >= total) {
+            completePercent = 100;
+        } else if (processed > 0 && completePercent === 0) {
+            completePercent = 1;
+        }
+
+        completePercent = Math.max(0, Math.min(100, completePercent));
+        const remainingPercent = Math.max(0, 100 - completePercent);
+
+        return {
+            completePercent: completePercent,
+            remainingPercent: remainingPercent,
+            label: completePercent + '% complete · ' + remainingPercent + '% remaining'
+                + ' (' + processed + ' of ' + total + ' SKUs)'
+                + ' — updated ' + (Number(status.updated) || 0)
+                + ', unchanged ' + (Number(status.unchanged) || 0)
+                + ', not in Net32 ' + (Number(status.missing) || 0),
+        };
+    }
+
+    function setProgress(status) {
+        if (!status || !panel || status.status === 'none') {
+            return;
+        }
+
+        const progress = resolveQtySyncProgress(status);
+        const isPreparing = (Number(status.total) || 0) <= 0 && status.is_active;
+
+        if (progressBar) {
+            if (isPreparing) {
+                progressBar.style.width = '0%';
+                progressBar.classList.add('progress-bar-animated', 'progress-bar-striped');
+                progressBar.parentElement?.setAttribute('aria-valuenow', '0');
+            } else {
+                progressBar.style.width = progress.completePercent + '%';
+                progressBar.classList.add('progress-bar-animated', 'progress-bar-striped');
+                progressBar.parentElement?.setAttribute('aria-valuenow', String(progress.completePercent));
+            }
+        }
+
+        if (progressLabel) {
+            progressLabel.textContent = isPreparing
+                ? 'Preparing...'
+                : progress.completePercent + '% complete';
+        }
+
+        if (progressRemaining) {
+            progressRemaining.textContent = isPreparing
+                ? ''
+                : progress.remainingPercent + '% remaining';
+        }
+
+        statusBadge.textContent = status.status;
+        statusBadge.className = 'badge text-bg-' + resolveQtySyncBadgeClass(status.status);
+
+        if (statusCounts) {
+            statusCounts.textContent = progress.label;
+        }
+
+        statusMessage.textContent = status.progress_message || 'Checking Net32 quantities...';
+        setCancelButtonState(status);
+
+        if (status.is_active) {
+            panel.classList.remove('d-none');
+            completePanel.classList.add('d-none');
+            setQtySyncControlsDisabled(true);
+        }
+    }
+
+    function showComplete(status) {
+        if (!completePanel || !panel) {
+            return;
+        }
+
+        panel.classList.add('d-none');
+        completePanel.classList.remove('d-none');
+        completePanel.className = 'alert alert-' + resolveQtySyncAlertClass(status.status)
+            + ' alert-dismissible fade show';
+
+        const message = status.progress_message || (
+            status.status === 'cancelled' ? 'Quantity sync cancelled.' : 'Quantity sync finished.'
+        );
+
+        if (completeTitle) {
+            completeTitle.textContent = status.status === 'cancelled'
+                ? 'Quantity sync cancelled.'
+                : 'Quantity sync finished.';
+        }
+
+        completeMessage.textContent = message;
+        setQtySyncControlsDisabled(false);
+        setCancelButtonState(null);
+        cancelRequested = false;
+
+        if (status.job_id) {
+            sessionStorage.setItem('inventory-qty-sync-complete-' + status.job_id, '1');
+        }
+    }
+
+    function cancelQtySyncJob() {
+        if (!activeJobId) {
+            return;
+        }
+
+        const isForceStop = qtySyncCancelBtn?.dataset.forceStop === '1';
+
+        const confirmMessage = isForceStop
+            ? 'Force stop this quantity sync now? It will be marked cancelled immediately.'
+            : 'Cancel this Net32 quantity sync? Quantities already updated will stay as they are.';
+
+        if (!window.confirm(confirmMessage)) {
+            return;
+        }
+
+        if (!isForceStop) {
+            cancelRequested = true;
+        }
+
+        setCancelButtonState({ is_active: true, can_cancel: false, cancel_requested: true });
+
+        const body = new URLSearchParams();
+        body.set(importCsrfName, importCsrfHash);
+        body.set('job_id', String(activeJobId));
+
+        fetch(qtySyncCancelUrl, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+        })
+            .then(function (response) {
+                return response.json().then(function (data) {
+                    return { ok: response.ok, data: data };
+                });
+            })
+            .then(function (result) {
+                const data = result.data || {};
+
+                if (!result.ok || !data.ok) {
+                    cancelRequested = false;
+                    window.alert(data.message || 'Could not cancel the quantity sync.');
+                    setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+                    return;
+                }
+
+                if (data.status === 'cancelled') {
+                    cancelRequested = false;
+                    poll();
+                    return;
+                }
+
+                setCancelButtonState({ is_active: true, can_cancel: false, cancel_requested: true });
+                poll();
+            })
+            .catch(function () {
+                cancelRequested = false;
+                window.alert('Could not cancel the quantity sync. Please try again.');
+                setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+            });
+    }
+
+    qtySyncCancelBtn?.addEventListener('click', cancelQtySyncJob);
+
+    function poll() {
+        const url = activeJobId ? qtySyncStatusUrl + '?job_id=' + activeJobId : qtySyncStatusUrl;
+
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) { return response.json(); })
+            .then(function (status) {
+                if (!status || status.status === 'none') {
+                    clearInterval(pollTimer);
+                    setQtySyncControlsDisabled(false);
+                    setCancelButtonState(null);
+                    cancelRequested = false;
+                    return;
+                }
+
+                activeJobId = status.job_id;
+                setProgress(status);
+
+                if (!status.is_active) {
+                    clearInterval(pollTimer);
+                    showComplete(status);
+                }
+            })
+            .catch(function () {
+                clearInterval(pollTimer);
+                setQtySyncControlsDisabled(false);
+                setCancelButtonState(null);
+                cancelRequested = false;
+            });
+    }
+
+    if ((qtySyncInitialStatus && qtySyncInitialStatus.is_active) || qtySyncJobIdFromUrl > 0) {
+        if (qtySyncInitialStatus) {
+            setProgress(qtySyncInitialStatus);
+        } else if (panel) {
+            panel.classList.remove('d-none');
+            if (progressLabel) {
+                progressLabel.textContent = 'Preparing...';
+            }
+            if (statusCounts) {
+                statusCounts.textContent = 'Starting quantity sync...';
+            }
+            setQtySyncControlsDisabled(true);
+        }
+
+        poll();
+        pollTimer = setInterval(poll, 2000);
+    } else if (
+        qtySyncInitialStatus
+        && !qtySyncInitialStatus.is_active
+        && qtySyncInitialStatus.finished_at
+        && qtySyncInitialStatus.job_id
+        && !sessionStorage.getItem('inventory-qty-sync-complete-' + qtySyncInitialStatus.job_id)
+    ) {
+        const finishedAt = new Date(String(qtySyncInitialStatus.finished_at).replace(' ', 'T'));
+        if (!Number.isNaN(finishedAt.getTime()) && (Date.now() - finishedAt.getTime()) < 15000) {
+            showComplete(qtySyncInitialStatus);
         }
     }
 })();

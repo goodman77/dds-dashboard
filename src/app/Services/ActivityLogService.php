@@ -103,6 +103,82 @@ class ActivityLogService
         );
     }
 
+    public function logInventoryQtySyncQueued(int $jobId, string $sheetName, ?int $userId = null): int
+    {
+        $sheetName = trim($sheetName);
+        $message   = $sheetName === InventoryQuantitySyncService::ALL_SHEETS
+            ? 'Net32 quantity sync queued for all sheets. It will start within about a minute.'
+            : sprintf('Net32 quantity sync queued for sheet "%s". It will start within about a minute.', $sheetName);
+
+        return $this->log(
+            'inventory_qty_sync',
+            'queued',
+            $message,
+            [
+                'job_id'     => $jobId,
+                'sheet_name' => $sheetName,
+            ],
+            $userId,
+            $jobId,
+        );
+    }
+
+    public function logInventoryQtySyncStarted(int $jobId, string $sheetName, ?int $userId = null): int
+    {
+        $sheetName = trim($sheetName);
+        $message   = $sheetName === InventoryQuantitySyncService::ALL_SHEETS
+            ? 'Net32 quantity sync started for all sheets.'
+            : sprintf('Net32 quantity sync started for sheet "%s".', $sheetName);
+
+        return $this->log(
+            'inventory_qty_sync',
+            'running',
+            $message,
+            [
+                'job_id'     => $jobId,
+                'sheet_name' => $sheetName,
+            ],
+            $userId,
+            $jobId,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    public function updateInventoryQtySyncLog(int $logId, string $status, string $message, array $details = []): void
+    {
+        $this->logs->updateEntry($logId, $status, $message, $details);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    public function buildInventoryQtySyncMessage(array $result): string
+    {
+        $sheetName = trim((string) ($result['sheet_name'] ?? ''));
+        $scope     = $sheetName === InventoryQuantitySyncService::ALL_SHEETS
+            ? 'All sheets'
+            : ($sheetName !== '' ? 'Sheet "' . $sheetName . '"' : 'Sheet');
+
+        $message = sprintf(
+            '%s: Checked %d SKU(s) in Net32. Updated: %d, unchanged: %d, not in Net32: %d.',
+            $scope,
+            $result['processed'] ?? 0,
+            $result['updated'] ?? 0,
+            $result['unchanged'] ?? 0,
+            $result['missing'] ?? 0,
+        );
+
+        $errors = $result['errors'] ?? [];
+
+        if ($errors !== []) {
+            $message .= ' Errors: ' . implode(' ', array_slice($errors, 0, 2));
+        }
+
+        return $message;
+    }
+
     /**
      * @param array<string, mixed> $details
      */

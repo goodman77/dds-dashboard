@@ -33,6 +33,8 @@ class BinLocations extends BaseController
         $sheetNames   = $this->resolveSheetNameOptions();
         $importJobId  = (int) $this->request->getGet('import_job');
         $importJobId  = $importJobId > 0 ? $importJobId : null;
+        $qtySyncJobId = (int) $this->request->getGet('qty_sync_job');
+        $qtySyncJobId = $qtySyncJobId > 0 ? $qtySyncJobId : null;
         $results      = $this->bins->paginateSearch(
             $search !== '' ? $search : null,
             $sheetName !== '' ? $sheetName : null,
@@ -63,6 +65,8 @@ class BinLocations extends BaseController
             'totalLocations' => $this->bins->countAllResults(),
             'importJobStatus' => service('inventoryImportJob')->getStatus($importJobId),
             'importJobId'     => $importJobId,
+            'qtySyncJobStatus' => service('inventoryQtySyncJob')->getStatus($qtySyncJobId),
+            'qtySyncJobId'     => $qtySyncJobId,
             'flashSuccess'   => session()->getFlashdata('success'),
             'flashError'     => session()->getFlashdata('error'),
         ]);
@@ -81,6 +85,16 @@ class BinLocations extends BaseController
         return $this->response->setJSON($status);
     }
 
+    public function qtySyncStatus(): ResponseInterface
+    {
+        $jobId = $this->request->getGet('job_id');
+
+        $status = service('inventoryQtySyncJob')->getStatus($jobId !== null ? (int) $jobId : null)
+            ?? ['status' => 'none'];
+
+        return $this->response->setJSON($status);
+    }
+
     public function cancelImport(): ResponseInterface
     {
         $jobId = (int) $this->request->getPost('job_id');
@@ -92,6 +106,27 @@ class BinLocations extends BaseController
         }
 
         $result = service('inventoryImportJob')->requestCancel($jobId);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
+    public function cancelQtySync(): ResponseInterface
+    {
+        $jobId = (int) $this->request->getPost('job_id');
+
+        if ($jobId <= 0) {
+            return $this->response
+                ->setStatusCode(422)
+                ->setJSON(['ok' => false, 'message' => 'Quantity sync job ID is required.']);
+        }
+
+        $result = service('inventoryQtySyncJob')->requestCancel($jobId);
+
+        if ($result['ok']) {
+            service('inventoryQtySyncJob')->reconcileStuckJobs();
+        }
 
         return $this->response
             ->setStatusCode($result['ok'] ? 200 : 422)
@@ -186,6 +221,34 @@ class BinLocations extends BaseController
         );
     }
 
+    public function qtySync(): RedirectResponse
+    {
+        $sheetName = trim((string) $this->request->getPost('sheet_name'));
+
+        if ($sheetName === '') {
+            return redirect()->to($this->inventoryUrl())->with(
+                'error',
+                'Choose a sheet tab for Net32 quantity sync.',
+            );
+        }
+
+        $dispatch = service('inventoryQtySyncJob')->enqueueForSheet(
+            $sheetName,
+            auth()->loggedIn() ? (int) auth()->id() : null,
+        );
+
+        $redirectQuery = [];
+
+        if ($dispatch['queued'] && isset($dispatch['job_id'])) {
+            $redirectQuery['qty_sync_job'] = (int) $dispatch['job_id'];
+        }
+
+        return redirect()->to($this->inventoryUrl($redirectQuery))->with(
+            $dispatch['queued'] ? 'success' : 'error',
+            $dispatch['message'],
+        );
+    }
+
     /**
      * @return list<string>
      */
@@ -212,7 +275,8 @@ class BinLocations extends BaseController
                 'qty'         => trim((string) $this->request->getGet('qty')),
                 'per_page'    => (int) $this->request->getGet('per_page'),
                 'page'        => (int) $this->request->getGet('page'),
-                'import_job'  => (int) $this->request->getGet('import_job'),
+                'import_job'   => (int) $this->request->getGet('import_job'),
+                'qty_sync_job' => (int) $this->request->getGet('qty_sync_job'),
             ], static fn ($value): bool => $value !== '' && $value !== 0);
         }
 

@@ -271,6 +271,42 @@ class InventoryModel extends Model
     }
 
     /**
+     * @return list<array<string, mixed>>
+     */
+    public function findBySheetName(string $sheetName): array
+    {
+        $sheetName = trim($sheetName);
+
+        if ($sheetName === '') {
+            return [];
+        }
+
+        $this->builder = null;
+
+        return $this->where('LOWER(sheet_name)', strtolower($sheetName))
+            ->orderBy('rack', 'ASC')
+            ->orderBy('bin', 'ASC')
+            ->orderBy('is_main_sku', 'DESC')
+            ->orderBy('sku', 'ASC')
+            ->findAll();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function findAllForQuantitySync(): array
+    {
+        $this->builder = null;
+
+        return $this->orderBy('sheet_name', 'ASC')
+            ->orderBy('rack', 'ASC')
+            ->orderBy('bin', 'ASC')
+            ->orderBy('is_main_sku', 'DESC')
+            ->orderBy('sku', 'ASC')
+            ->findAll();
+    }
+
+    /**
      * @return list<string>
      */
     public function getSheetNames(): array

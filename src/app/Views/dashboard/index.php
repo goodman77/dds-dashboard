@@ -116,7 +116,7 @@
                     <table class="table table-striped table-hover mb-0">
                         <thead>
                             <tr>
-                                <th style="width: 170px;">Date</th>
+                                <th style="width: 190px;">Date (Pacific)</th>
                                 <th style="width: 140px;">Action</th>
                                 <th style="width: 110px;">Status</th>
                                 <th>Message</th>
@@ -140,10 +140,9 @@
                                         'queued'    => 'info',
                                         default     => 'secondary',
                                     };
-                                    $createdAt = $entry['created_at'] ?? null;
-                                    $displayDate = ($createdAt !== null && $createdAt !== '')
-                                        ? date('m/d/Y H:i:s', strtotime((string) $createdAt))
-                                        : '—';
+                                    $displayDate = format_log_datetime(
+                                        isset($entry['created_at']) ? (string) $entry['created_at'] : null,
+                                    );
                                     ?>
                                     <tr>
                                         <td class="small text-nowrap"><?= esc($displayDate) ?></td>

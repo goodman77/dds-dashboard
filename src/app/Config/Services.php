@@ -81,6 +81,30 @@ class Services extends BaseService
         );
     }
 
+    public static function inventoryQtySync(bool $getShared = true): \App\Services\InventoryQuantitySyncService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryQtySync');
+        }
+
+        return new \App\Services\InventoryQuantitySyncService(
+            model(\App\Models\InventoryModel::class),
+            static::inventoryQuantityCheck(false),
+        );
+    }
+
+    public static function inventoryQtySyncJob(bool $getShared = true): \App\Services\InventoryQuantitySyncJobService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryQtySyncJob');
+        }
+
+        return new \App\Services\InventoryQuantitySyncJobService(
+            model(\App\Models\InventoryQuantitySyncJobModel::class),
+            static::inventoryQtySync(false),
+        );
+    }
+
     public static function activityLog(bool $getShared = true): \App\Services\ActivityLogService
     {
         if ($getShared) {
