@@ -295,7 +295,7 @@ class ActivityLogService
             ->join('inventory_import_jobs j', 'j.id = al.reference_id AND j.activity_log_id = al.id', 'inner')
             ->where('al.action', 'inventory_import')
             ->whereIn('al.status', ['running', 'queued'])
-            ->whereIn('j.status', ['completed', 'failed'])
+            ->whereIn('j.status', ['completed', 'failed', 'cancelled'])
             ->get()
             ->getResultArray();
 

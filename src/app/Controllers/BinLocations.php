@@ -81,6 +81,23 @@ class BinLocations extends BaseController
         return $this->response->setJSON($status);
     }
 
+    public function cancelImport(): ResponseInterface
+    {
+        $jobId = (int) $this->request->getPost('job_id');
+
+        if ($jobId <= 0) {
+            return $this->response
+                ->setStatusCode(422)
+                ->setJSON(['ok' => false, 'message' => 'Import job ID is required.']);
+        }
+
+        $result = service('inventoryImportJob')->requestCancel($jobId);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
     public function show(int $id): ResponseInterface
     {
         $location = $this->bins->find($id);
@@ -143,18 +160,17 @@ class BinLocations extends BaseController
 
     public function sync(): RedirectResponse
     {
-        $scope     = (string) $this->request->getPost('import_scope');
         $sheetName = trim((string) $this->request->getPost('sheet_name'));
 
-        if ($scope === 'sheet' && $sheetName === '') {
+        if ($sheetName === '') {
             return redirect()->to($this->inventoryUrl())->with(
                 'error',
-                'Choose a sheet tab to import, or select all sheets.',
+                'Choose a sheet tab to import.',
             );
         }
 
         $dispatch = service('inventoryImportJob')->dispatch(
-            $scope === 'sheet' ? $sheetName : null,
+            $sheetName,
             auth()->loggedIn() ? (int) auth()->id() : null,
         );
 

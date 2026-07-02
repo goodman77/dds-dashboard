@@ -83,6 +83,7 @@
                                     $statusClass = match ($status) {
                                         'completed' => 'success',
                                         'failed'    => 'danger',
+                                        'cancelled' => 'secondary',
                                         'running'   => 'warning',
                                         'queued'    => 'info',
                                         default     => 'secondary',

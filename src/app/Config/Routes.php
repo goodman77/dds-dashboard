@@ -20,6 +20,7 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
     $routes->post('inventory/(:num)', 'BinLocations::update/$1');
     $routes->post('inventory/(:num)/check-qty', 'BinLocations::checkQuantity/$1');
     $routes->post('inventory/sync', 'BinLocations::sync');
+    $routes->post('inventory/import/cancel', 'BinLocations::cancelImport');
     $routes->get('inventory/import-status', 'BinLocations::importStatus');
     $routes->get('logs', 'Logs::index');
     $routes->get('profile', 'Profile::index');

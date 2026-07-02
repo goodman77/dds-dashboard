@@ -41,9 +41,14 @@
         <?php endif ?>
 
         <div id="import-status-panel" class="alert alert-info d-none">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <strong id="import-status-title">Inventory import running...</strong>
-                <span id="import-status-badge" class="badge text-bg-info">running</span>
+            <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <strong id="import-status-title">Inventory import running...</strong>
+                    <span id="import-status-badge" class="badge text-bg-info">running</span>
+                </div>
+                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="import-cancel-btn">
+                    <i class="bi bi-x-circle"></i> Cancel Import
+                </button>
             </div>
             <div class="d-flex justify-content-between align-items-center mb-1">
                 <span id="import-progress-label" class="small fw-semibold">0%</span>
@@ -65,7 +70,7 @@
         </div>
 
         <div id="import-complete-panel" class="alert alert-success alert-dismissible fade show d-none" role="alert">
-            <strong>Import finished.</strong>
+            <strong id="import-complete-title">Import finished.</strong>
             <div id="import-complete-message" class="mb-0"></div>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
@@ -248,20 +253,9 @@
                 <div class="modal-body">
                     <p class="text-muted small">The import is queued and runs in the background (usually within a minute). Progress appears on the <a href="<?= site_url('logs') ?>">Logs</a> page with status <strong>Running</strong>, then <strong>Completed</strong> or <strong>Failed</strong>.</p>
                     <p class="text-muted small mb-0">New worksheet tabs (for example <strong>X</strong>) are added to the sheet dropdown automatically when <code>googleSheets.apiKey</code> is set in <code>.env</code> and an import runs.</p>
-                    <div class="mb-3 mt-3">
-                        <label class="form-label">Which sheets should be imported?</label>
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="import_scope" id="import-scope-all" value="all" checked>
-                            <label class="form-check-label" for="import-scope-all">All sheet tabs</label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="import_scope" id="import-scope-sheet" value="sheet">
-                            <label class="form-check-label" for="import-scope-sheet">One specific sheet tab</label>
-                        </div>
-                    </div>
-                    <div class="mb-0" id="import-sheet-select-wrap" hidden>
+                    <div class="mb-0 mt-3">
                         <label for="import-sheet-name" class="form-label">Sheet tab</label>
-                        <select class="form-select" name="sheet_name" id="import-sheet-name">
+                        <select class="form-select" name="sheet_name" id="import-sheet-name" required>
                             <option value="">Choose a sheet...</option>
                             <?php foreach ($sheetNames as $name) : ?>
                                 <option value="<?= esc($name) ?>"><?= esc($name) ?></option>
@@ -359,6 +353,9 @@
 <script>
 const importInitialStatus = <?= json_encode($importJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const importStatusUrl = <?= json_encode(site_url('inventory/import-status')) ?>;
+const importCancelUrl = <?= json_encode(site_url('inventory/import/cancel')) ?>;
+const importCsrfName = <?= json_encode(csrf_token()) ?>;
+const importCsrfHash = <?= json_encode(csrf_hash()) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
 const inventoryValidateUrl = <?= json_encode(site_url('inventory/validate')) ?>;
@@ -875,23 +872,6 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
 });
 
 (function () {
-    const scopeAll = document.getElementById('import-scope-all');
-    const scopeSheet = document.getElementById('import-scope-sheet');
-    const sheetWrap = document.getElementById('import-sheet-select-wrap');
-    const sheetSelect = document.getElementById('import-sheet-name');
-
-    function syncSheetPicker() {
-        const showSheet = scopeSheet?.checked ?? false;
-        if (sheetWrap) sheetWrap.hidden = !showSheet;
-        if (sheetSelect) sheetSelect.required = showSheet;
-    }
-
-    scopeAll?.addEventListener('change', syncSheetPicker);
-    scopeSheet?.addEventListener('change', syncSheetPicker);
-    syncSheetPicker();
-})();
-
-(function () {
     const panel = document.getElementById('import-status-panel');
     const completePanel = document.getElementById('import-complete-panel');
     const progressBar = document.getElementById('import-progress-bar');
@@ -901,9 +881,12 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
     const statusCounts = document.getElementById('import-status-counts');
     const statusMessage = document.getElementById('import-status-message');
     const completeMessage = document.getElementById('import-complete-message');
+    const completeTitle = document.getElementById('import-complete-title');
     const importBtn = document.getElementById('sheets-sync-btn');
     const importSubmit = document.getElementById('sheets-sync-submit');
+    const importCancelBtn = document.getElementById('import-cancel-btn');
     let pollTimer = null;
+    let cancelRequested = false;
     let activeJobId = importJobIdFromUrl > 0
         ? importJobIdFromUrl
         : (importInitialStatus?.job_id ?? null);
@@ -911,6 +894,54 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
     function setImportControlsDisabled(disabled) {
         if (importBtn) importBtn.disabled = disabled;
         if (importSubmit) importSubmit.disabled = disabled;
+    }
+
+    function setCancelButtonState(status) {
+        if (!importCancelBtn) {
+            return;
+        }
+
+        const canCancel = !!status?.can_cancel && !cancelRequested;
+        importCancelBtn.classList.toggle('d-none', !status?.is_active);
+        importCancelBtn.disabled = !canCancel;
+
+        if (status?.cancel_requested || cancelRequested) {
+            importCancelBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Stopping...';
+        } else {
+            importCancelBtn.innerHTML = '<i class="bi bi-x-circle"></i> Cancel Import';
+        }
+    }
+
+    function resolveImportAlertClass(status) {
+        if (status === 'completed') {
+            return 'success';
+        }
+
+        if (status === 'cancelled') {
+            return 'warning';
+        }
+
+        return 'danger';
+    }
+
+    function resolveImportBadgeClass(status) {
+        if (status === 'failed') {
+            return 'danger';
+        }
+
+        if (status === 'completed') {
+            return 'success';
+        }
+
+        if (status === 'cancelled') {
+            return 'secondary';
+        }
+
+        if (status === 'queued') {
+            return 'info';
+        }
+
+        return 'warning';
     }
 
     function resolveImportProgress(status) {
@@ -984,15 +1015,14 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         }
 
         statusBadge.textContent = status.status;
-        statusBadge.className = 'badge text-bg-' + (
-            status.status === 'failed' ? 'danger' : (status.status === 'completed' ? 'success' : 'info')
-        );
+        statusBadge.className = 'badge text-bg-' + resolveImportBadgeClass(status.status);
 
         if (statusCounts) {
             statusCounts.textContent = progress.label;
         }
 
         statusMessage.textContent = status.progress_message || 'Working...';
+        setCancelButtonState(status);
 
         if (status.is_active) {
             panel.classList.remove('d-none');
@@ -1008,10 +1038,18 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
 
         panel.classList.add('d-none');
         completePanel.classList.remove('d-none');
-        completePanel.className = 'alert alert-' + (status.status === 'completed' ? 'success' : 'danger')
+        completePanel.className = 'alert alert-' + resolveImportAlertClass(status.status)
             + ' alert-dismissible fade show';
 
-        let message = status.progress_message || 'Import finished.';
+        let message = status.progress_message || (
+            status.status === 'cancelled' ? 'Import cancelled.' : 'Import finished.'
+        );
+
+        if (completeTitle) {
+            completeTitle.textContent = status.status === 'cancelled'
+                ? 'Import cancelled.'
+                : (status.status === 'completed' ? 'Import finished.' : 'Import failed.');
+        }
 
         if (Array.isArray(status.discovered_sheets) && status.discovered_sheets.length > 0) {
             message += ' New sheet tab(s) added to the dropdown: ' + status.discovered_sheets.join(', ') + '.';
@@ -1020,6 +1058,8 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         completeMessage.textContent = message;
         updateSheetNameSelects(status.sheet_names || inventorySheetNames);
         setImportControlsDisabled(false);
+        setCancelButtonState(status);
+        cancelRequested = false;
         scheduleAlertDismiss(completePanel, ALERT_DISMISS_MS);
 
         if (status.job_id) {
@@ -1074,6 +1114,67 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         }
     }
 
+    function cancelImportJob() {
+        if (!activeJobId || cancelRequested) {
+            return;
+        }
+
+        if (!window.confirm('Cancel this inventory import? SKUs already imported will stay in the database.')) {
+            return;
+        }
+
+        cancelRequested = true;
+        setCancelButtonState({ is_active: true, can_cancel: false, cancel_requested: true });
+
+        const body = new URLSearchParams();
+        body.set(importCsrfName, importCsrfHash);
+        body.set('job_id', String(activeJobId));
+
+        fetch(importCancelUrl, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+        })
+            .then(function (response) {
+                return response.json().then(function (data) {
+                    return { ok: response.ok, data: data };
+                });
+            })
+            .then(function (result) {
+                const data = result.data || {};
+
+                if (!result.ok || !data.ok) {
+                    cancelRequested = false;
+                    window.alert(data.message || 'Could not cancel the import.');
+                    setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+                    return;
+                }
+
+                if (data.status === 'cancelled') {
+                    cancelRequested = false;
+                    poll();
+                    return;
+                }
+
+                if (statusMessage) {
+                    statusMessage.textContent = data.message || 'Stopping import...';
+                }
+
+                poll();
+            })
+            .catch(function () {
+                cancelRequested = false;
+                window.alert('Could not cancel the import. Please try again.');
+                setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+            });
+    }
+
+    importCancelBtn?.addEventListener('click', cancelImportJob);
+
     function poll() {
         const url = activeJobId ? importStatusUrl + '?job_id=' + activeJobId : importStatusUrl;
 
@@ -1083,6 +1184,8 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
                 if (!status || status.status === 'none') {
                     clearInterval(pollTimer);
                     setImportControlsDisabled(false);
+                    setCancelButtonState(null);
+                    cancelRequested = false;
                     return;
                 }
 
@@ -1098,6 +1201,8 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
             .catch(function () {
                 clearInterval(pollTimer);
                 setImportControlsDisabled(false);
+                setCancelButtonState(null);
+                cancelRequested = false;
             });
     }
 

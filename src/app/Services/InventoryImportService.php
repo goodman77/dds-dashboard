@@ -98,6 +98,22 @@ class InventoryImportService
         $sheetPlans = [];
 
         foreach ($sheetNames as $sheetName) {
+            $cancelled = $this->buildCancelledImportResult(
+                $jobId,
+                $sheetCount,
+                $scanned,
+                $imported,
+                $skipped,
+                $ignored,
+                $errors,
+                $onlySheet,
+                $discoveredSheets,
+            );
+
+            if ($cancelled !== null) {
+                return $this->finish($cancelled, $dryRun, $logActivity);
+            }
+
             if ($jobId !== null) {
                 service('inventoryImportJob')->updateProgress(
                     $jobId,
@@ -141,6 +157,22 @@ class InventoryImportService
         }
 
         foreach ($sheetPlans as $plan) {
+            $cancelled = $this->buildCancelledImportResult(
+                $jobId,
+                $sheetCount,
+                $scanned,
+                $imported,
+                $skipped,
+                $ignored,
+                $errors,
+                $onlySheet,
+                $discoveredSheets,
+            );
+
+            if ($cancelled !== null) {
+                return $this->finish($cancelled, $dryRun, $logActivity);
+            }
+
             $sheetName = $plan['sheet'];
             $entries   = $plan['entries'];
             $sheetCount++;
@@ -155,6 +187,22 @@ class InventoryImportService
             }
 
             foreach ($entries as $entry) {
+                $cancelled = $this->buildCancelledImportResult(
+                    $jobId,
+                    $sheetCount,
+                    $scanned,
+                    $imported,
+                    $skipped,
+                    $ignored,
+                    $errors,
+                    $onlySheet,
+                    $discoveredSheets,
+                );
+
+                if ($cancelled !== null) {
+                    return $this->finish($cancelled, $dryRun, $logActivity);
+                }
+
                 $sku = $entry['sku'];
                 $current = $scanned + 1;
                 $prefix = $this->formatProgressPrefix($current, $grandTotal, $entry);
@@ -287,6 +335,42 @@ class InventoryImportService
         }
 
         CLI::write($message, $color);
+    }
+
+    /**
+     * @param list<string> $errors
+     * @param list<string> $discoveredSheets
+     *
+     * @return array<string, mixed>|null
+     */
+    private function buildCancelledImportResult(
+        ?int $jobId,
+        int $sheetCount,
+        int $scanned,
+        int $imported,
+        int $skipped,
+        int $ignored,
+        array $errors,
+        ?string $onlySheet,
+        array $discoveredSheets,
+    ): ?array {
+        if ($jobId === null || ! service('inventoryImportJob')->isCancelRequested($jobId)) {
+            return null;
+        }
+
+        return [
+            'sheets'            => $sheetCount,
+            'scanned'           => $scanned,
+            'imported'          => $imported,
+            'skipped'           => $skipped,
+            'ignored'           => $ignored,
+            'errors'            => $errors,
+            'sheet_name'        => $onlySheet,
+            'discovered_sheets' => $discoveredSheets,
+            'sheet_names'       => $this->sheets->getSheetNameOptions(),
+            'cancelled'         => true,
+            'total'             => max($scanned, 0),
+        ];
     }
 
     /**

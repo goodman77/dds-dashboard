@@ -148,7 +148,7 @@ class InventoryImportJobService
             throw new \RuntimeException(sprintf('Import job %d not found.', $jobId));
         }
 
-        if (in_array($job['status'], ['completed', 'failed'], true)) {
+        if (in_array($job['status'], ['completed', 'failed', 'cancelled'], true)) {
             return;
         }
 
@@ -182,6 +182,26 @@ class InventoryImportJobService
                 false,
                 $jobId,
             );
+
+            if (! empty($result['cancelled'])) {
+                $this->cancelJob(
+                    $jobId,
+                    $logId,
+                    sprintf(
+                        '%s: Import cancelled by user after processing %d of %d SKU(s).',
+                        service('activityLog')->formatImportSheetLabel($sheetName),
+                        (int) ($result['scanned'] ?? 0),
+                        (int) ($result['total'] ?? $result['scanned'] ?? 0),
+                    ),
+                    $sheetName,
+                    array_merge($result, [
+                        'total'   => (int) ($result['scanned'] ?? 0),
+                        'scanned' => (int) ($result['scanned'] ?? 0),
+                    ]),
+                );
+
+                return;
+            }
 
             $status = ($result['scanned'] ?? 0) === 0 && ($result['sheets'] ?? 0) === 0 && ($result['errors'] ?? []) !== []
                 ? 'failed'
@@ -326,15 +346,134 @@ class InventoryImportJobService
     ): void {
         $progressMessage = $message ?? sprintf('Processing SKU %d of %d...', $scanned, $total);
 
+        $job = $this->jobs->find($jobId);
+        $existing = $this->decodeJsonField($job['result'] ?? null) ?? [];
+
         $this->jobs->update($jobId, [
             'status'           => 'running',
             'progress_message' => mb_substr($progressMessage, 0, 255),
-            'result'           => [
+            'result'           => array_merge($existing, [
                 'scanned'       => $scanned,
                 'total'         => $total,
                 'current_sheet' => $currentSheet,
-            ],
+            ]),
         ]);
+    }
+
+    /**
+     * @return array{ok: bool, message: string, status?: string, cancel_requested?: bool}
+     */
+    public function requestCancel(int $jobId): array
+    {
+        $job = $this->jobs->find($jobId);
+
+        if ($job === null) {
+            return ['ok' => false, 'message' => 'Import job not found.'];
+        }
+
+        $status = (string) $job['status'];
+
+        if ($status === 'cancelled') {
+            return ['ok' => true, 'message' => 'Import already cancelled.', 'status' => 'cancelled'];
+        }
+
+        if (! in_array($status, ['queued', 'running'], true)) {
+            return ['ok' => false, 'message' => 'This import is not active.'];
+        }
+
+        $logId     = isset($job['activity_log_id']) ? (int) $job['activity_log_id'] : null;
+        $sheetName = $this->normalizeSheetName($job['sheet_name'] ?? null);
+
+        if ($status === 'queued') {
+            $this->cancelJob(
+                $jobId,
+                $logId,
+                sprintf(
+                    '%s: Import cancelled before it started.',
+                    service('activityLog')->formatImportSheetLabel($sheetName),
+                ),
+                $sheetName,
+            );
+
+            return ['ok' => true, 'message' => 'Import cancelled.', 'status' => 'cancelled'];
+        }
+
+        if ($this->isCancelRequested($jobId)) {
+            return [
+                'ok'               => true,
+                'message'          => 'Import is already stopping.',
+                'status'           => 'running',
+                'cancel_requested' => true,
+            ];
+        }
+
+        $progress = $this->decodeJsonField($job['result'] ?? null) ?? [];
+        $progress['cancel_requested'] = true;
+
+        $this->jobs->update($jobId, [
+            'progress_message' => sprintf(
+                '%s: Cancellation requested...',
+                service('activityLog')->formatImportSheetLabel($sheetName),
+            ),
+            'result'           => $progress,
+        ]);
+
+        return [
+            'ok'               => true,
+            'message'          => 'Stopping import...',
+            'status'           => 'running',
+            'cancel_requested' => true,
+        ];
+    }
+
+    public function isCancelRequested(int $jobId): bool
+    {
+        $job = $this->jobs->find($jobId);
+
+        if ($job === null || (string) $job['status'] !== 'running') {
+            return false;
+        }
+
+        $progress = $this->decodeJsonField($job['result'] ?? null);
+
+        return ! empty($progress['cancel_requested']);
+    }
+
+    /**
+     * @param array<string, mixed>|null $result
+     */
+    private function cancelJob(
+        int $jobId,
+        ?int $logId,
+        string $message,
+        ?string $sheetName,
+        ?array $result = null,
+    ): void {
+        $update = [
+            'status'           => 'cancelled',
+            'progress_message' => $message,
+            'finished_at'      => date('Y-m-d H:i:s'),
+        ];
+
+        if ($result !== null) {
+            $update['result'] = $result;
+        }
+
+        $this->jobs->update($jobId, $update);
+
+        if ($logId !== null) {
+            service('activityLog')->updateInventoryImportLog(
+                $logId,
+                'cancelled',
+                $message,
+                array_merge(is_array($result) ? $result : [], [
+                    'job_id'     => $jobId,
+                    'sheet_name' => $sheetName,
+                ]),
+            );
+        }
+
+        service('activityLog')->reconcileStaleImportLogs();
     }
 
     /**
@@ -357,11 +496,14 @@ class InventoryImportJobService
         [$scanned, $total] = $this->resolveProgressCounters($progress, (string) $job['status']);
         $isActive = in_array($job['status'], ['queued', 'running'], true);
         $percent  = $this->calculateProgressPercent($scanned, $total);
+        $cancelRequested = ! empty($progress['cancel_requested']);
 
         return [
             'job_id'             => (int) $job['id'],
             'status'             => (string) $job['status'],
             'is_active'          => $isActive,
+            'cancel_requested'   => $cancelRequested,
+            'can_cancel'         => $isActive && ! $cancelRequested,
             'sheet_name'         => $job['sheet_name'] ?? null,
             'progress_message'   => (string) ($job['progress_message'] ?? ''),
             'scanned'            => $scanned,
