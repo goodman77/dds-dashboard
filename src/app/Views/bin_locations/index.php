@@ -127,9 +127,9 @@
                 <div class="info-box">
                     <span class="info-box-icon text-bg-success"><i class="bi bi-clock-history"></i></span>
                     <div class="info-box-content">
-                        <span class="info-box-text">Last Synced</span>
-                        <span class="info-box-number" style="font-size: 1rem;">
-                            <?= $lastSyncedAt ? esc($lastSyncedAt) : 'Never' ?>
+                        <span class="info-box-text">Last Net32 Qty Sync</span>
+                        <span class="info-box-number" style="font-size: 1rem;" id="last-net32-qty-sync-at">
+                            <?= $lastNet32QtySyncAt ? esc(format_log_datetime($lastNet32QtySyncAt)) : 'Never' ?>
                         </span>
                     </div>
                 </div>
@@ -1359,6 +1359,16 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         if (qtySyncSubmit) qtySyncSubmit.disabled = disabled;
     }
 
+    function updateLastNet32QtySyncDisplay(status) {
+        const element = document.getElementById('last-net32-qty-sync-at');
+
+        if (!element || !status?.last_net32_qty_sync_at_display) {
+            return;
+        }
+
+        element.textContent = status.last_net32_qty_sync_at_display;
+    }
+
     function setCancelButtonState(status) {
         if (!qtySyncCancelBtn) {
             return;
@@ -1488,6 +1498,7 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
 
         statusMessage.textContent = status.progress_message || 'Checking Net32 quantities...';
         setCancelButtonState(status);
+        updateLastNet32QtySyncDisplay(status);
 
         if (status.is_active) {
             panel.classList.remove('d-none');
@@ -1517,6 +1528,7 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         }
 
         completeMessage.textContent = message;
+        updateLastNet32QtySyncDisplay(status);
         setQtySyncControlsDisabled(false);
         setCancelButtonState(null);
         cancelRequested = false;

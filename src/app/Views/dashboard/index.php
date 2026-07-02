@@ -88,7 +88,7 @@
                     <div class="info-box-content">
                         <span class="info-box-text">Last Google Sheets Sync</span>
                         <span class="info-box-number" style="font-size: 1rem;">
-                            <?= $lastSyncedAt ? esc($lastSyncedAt) : 'Never' ?>
+                            <?= $lastSyncedAt ? esc(format_log_datetime($lastSyncedAt)) : 'Never' ?>
                         </span>
                     </div>
                 </div>
@@ -97,9 +97,9 @@
                 <div class="info-box">
                     <span class="info-box-icon text-bg-warning"><i class="bi bi-cloud-check"></i></span>
                     <div class="info-box-content">
-                        <span class="info-box-text">Last Net32 SKU Check</span>
+                        <span class="info-box-text">Last Net32 Qty Sync</span>
                         <span class="info-box-number" style="font-size: 1rem;">
-                            <?= $lastNet32Check ? esc($lastNet32Check) : 'Never' ?>
+                            <?= $lastNet32Check ? esc(format_log_datetime($lastNet32Check)) : 'Never' ?>
                         </span>
                     </div>
                 </div>

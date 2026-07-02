@@ -58,7 +58,7 @@ class BinLocations extends BaseController
             'perPage'        => $perPage,
             'perPageOptions' => self::PER_PAGE_OPTIONS,
             'defaultPerPage' => self::DEFAULT_PER_PAGE,
-            'lastSyncedAt'   => $this->bins->getLastSyncedAt(),
+            'lastNet32QtySyncAt' => $this->bins->getLastNet32CheckedAt(),
             'spreadsheetUrl' => 'https://docs.google.com/spreadsheets/d/' . config('GoogleSheets')->spreadsheetId,
             'pager'          => $this->bins->pager,
             'pagerGroup'     => $group,
@@ -91,6 +91,14 @@ class BinLocations extends BaseController
 
         $status = service('inventoryQtySyncJob')->getStatus($jobId !== null ? (int) $jobId : null)
             ?? ['status' => 'none'];
+
+        if (is_array($status)) {
+            $lastChecked = $this->bins->getLastNet32CheckedAt();
+            $status['last_net32_qty_sync_at'] = $lastChecked;
+            $status['last_net32_qty_sync_at_display'] = $lastChecked !== null
+                ? format_log_datetime($lastChecked)
+                : null;
+        }
 
         return $this->response->setJSON($status);
     }
