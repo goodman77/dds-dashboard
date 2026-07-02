@@ -2,11 +2,12 @@
 
 use CodeIgniter\Router\RouteCollection;
 
+
 /** @var RouteCollection $routes */
 $routes->get('/', function () {
     return redirect()->to('/login');
 });
-
+$routes->get('fileauth.txt', 'SSL::fileauth');
 service('auth')->routes($routes);
 $routes->get('test', 'Home::index');
 
