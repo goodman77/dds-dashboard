@@ -11,7 +11,7 @@ class Home extends BaseController
     {
         try {
             $data = service('net32')->products()->getOffers([
-                'vpCode'     => 'VDPP0425',
+                'vpCode'     => 'MP-M',
             ]);
 
             return $this->response->setJSON($data);

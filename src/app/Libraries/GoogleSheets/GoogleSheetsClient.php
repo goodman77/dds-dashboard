@@ -34,6 +34,23 @@ class GoogleSheetsClient
         return self::sortNamesDescending($this->configuredSheetNames());
     }
 
+    public function sheetExists(string $sheetName): bool
+    {
+        $sheetName = trim($sheetName);
+
+        if ($sheetName === '') {
+            return false;
+        }
+
+        foreach ($this->listSheetNames() as $name) {
+            if (strcasecmp($name, $sheetName) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * @param list<string> $names
      *
@@ -74,7 +91,7 @@ class GoogleSheetsClient
     public function fetchSheetRows(string $sheetName): array
     {
         $url = sprintf(
-            'https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:json&sheet=%s',
+            'https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:json&headers=1&sheet=%s',
             rawurlencode($this->config->spreadsheetId),
             rawurlencode($sheetName),
         );

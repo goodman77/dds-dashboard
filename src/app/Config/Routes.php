@@ -7,7 +7,7 @@ use CodeIgniter\Router\RouteCollection;
 $routes->get('/', function () {
     return redirect()->to('/login');
 });
-$routes->get('fileauth.txt', 'SSL::fileauth');
+
 service('auth')->routes($routes);
 $routes->get('test', 'Home::index');
 
@@ -15,6 +15,7 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
     $routes->get('dashboard', 'Dashboard::index');
     $routes->get('inventory', 'BinLocations::index');
     $routes->post('inventory', 'BinLocations::store');
+    $routes->post('inventory/validate', 'BinLocations::validateSave');
     $routes->get('inventory/(:num)', 'BinLocations::show/$1');
     $routes->post('inventory/(:num)', 'BinLocations::update/$1');
     $routes->post('inventory/(:num)/check-qty', 'BinLocations::checkQuantity/$1');

@@ -10,10 +10,10 @@ use CodeIgniter\HTTP\ResponseInterface;
 
 class BinLocations extends BaseController
 {
-    private const DEFAULT_PER_PAGE = 100;
+    private const DEFAULT_PER_PAGE = 500;
 
     /** @var list<int> */
-    private const PER_PAGE_OPTIONS = [10, 25, 50, 100, 200];
+    private const PER_PAGE_OPTIONS = [10, 25, 50, 100, 200, 500];
 
     protected InventoryModel $bins;
 
@@ -102,24 +102,30 @@ class BinLocations extends BaseController
         ]);
     }
 
+    public function validateSave(): ResponseInterface
+    {
+        $id = $this->request->getPost('id');
+        $id = is_numeric($id) ? (int) $id : null;
+
+        $result = $this->bins->previewManualSave($this->request->getPost(), $id);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
     public function store(): RedirectResponse
     {
         $result = $this->bins->saveFromInput($this->request->getPost());
 
-        return redirect()->to($this->inventoryUrl())->with(
-            $result['ok'] ? 'success' : 'error',
-            $result['message'],
-        );
+        return $this->redirectFromSaveResult($result);
     }
 
     public function update(int $id): RedirectResponse
     {
         $result = $this->bins->saveFromInput($this->request->getPost(), $id);
 
-        return redirect()->to($this->inventoryUrl())->with(
-            $result['ok'] ? 'success' : 'error',
-            $result['message'],
-        );
+        return $this->redirectFromSaveResult($result);
     }
 
     public function checkQuantity(int $id): ResponseInterface
@@ -271,5 +277,19 @@ class BinLocations extends BaseController
         }
 
         return $result;
+    }
+
+    /**
+     * @param array{ok: bool, message: string} $result
+     */
+    private function redirectFromSaveResult(array $result): RedirectResponse
+    {
+        $redirect = redirect()->to($this->inventoryUrl());
+
+        if ($result['ok']) {
+            return $redirect->with('success', $result['message']);
+        }
+
+        return $redirect->with('error', $result['message']);
     }
 }

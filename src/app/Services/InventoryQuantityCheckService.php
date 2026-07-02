@@ -100,6 +100,36 @@ class InventoryQuantityCheckService
     }
 
     /**
+     * @return array{exists: bool|null, warning: string|null}
+     */
+    public function inspectSkuInNet32(string $sku): array
+    {
+        $sku = trim($sku);
+
+        if ($sku === '') {
+            return ['exists' => null, 'warning' => null];
+        }
+
+        try {
+            $offer = $this->products->findOfferByVpCode($sku);
+        } catch (Net32ApiException $exception) {
+            return [
+                'exists'  => null,
+                'warning' => sprintf('Could not verify SKU %s in Net32: %s', $sku, $exception->getMessage()),
+            ];
+        }
+
+        if ($offer === null) {
+            return [
+                'exists'  => false,
+                'warning' => sprintf('Warning: SKU %s was not found in Net32.', $sku),
+            ];
+        }
+
+        return ['exists' => true, 'warning' => null];
+    }
+
+    /**
      * Push a quantity change to Net32 for a local inventory row.
      *
      * @return array{ok: bool, message: string}

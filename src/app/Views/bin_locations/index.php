@@ -10,8 +10,8 @@
                 <p class="text-muted small mb-0">One row per SKU — rack, bin, and Net32 product details</p>
             </div>
             <div class="col-sm-6 text-sm-end mt-2 mt-sm-0">
-                <button type="button" class="btn btn-success btn-sm" id="inventory-add-btn" data-bs-toggle="modal" data-bs-target="#inventory-form-modal">
-                    <i class="bi bi-plus-lg"></i> Add Row
+                <button type="button" class="btn btn-success btn-sm" id="inventory-add-btn">
+                    <i class="bi bi-plus-lg"></i> Add Main SKU
                 </button>
                 <a href="<?= esc($spreadsheetUrl) ?>" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener">
                     <i class="bi bi-table"></i> Open Google Sheet
@@ -289,6 +289,13 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
+                    <div id="inventory-form-error" class="alert alert-danger d-none" role="alert"></div>
+                    <div id="inventory-form-warnings" class="alert alert-warning d-none" role="alert">
+                        <strong>Please review before saving:</strong>
+                        <ul id="inventory-form-warnings-list" class="mb-2 mt-2"></ul>
+                        <p class="mb-0 small">Go back to edit the row, or choose Save anyway to continue.</p>
+                    </div>
+                    <div id="inventory-alternate-context" class="alert alert-light border small d-none" role="status"></div>
                     <div class="row g-3">
                         <div class="col-md-4">
                             <label for="inventory-sheet-name" class="form-label">Sheet</label>
@@ -331,7 +338,7 @@
                             <label for="inventory-description" class="form-label">Description</label>
                             <textarea class="form-control" id="inventory-description" name="description" rows="3"></textarea>
                         </div>
-                        <div class="col-md-12">
+                        <div class="col-md-12" id="inventory-main-sku-field">
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" value="1" id="inventory-is-main-sku" name="is_main_sku">
                                 <label class="form-check-label" for="inventory-is-main-sku">Main SKU for this rack/bin</label>
@@ -353,6 +360,7 @@ const importInitialStatus = <?= json_encode($importJobStatus, JSON_HEX_TAG | JSO
 const importStatusUrl = <?= json_encode(site_url('inventory/import-status')) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
+const inventoryValidateUrl = <?= json_encode(site_url('inventory/validate')) ?>;
 const ALERT_DISMISS_MS = 20000;
 
 function dismissAlertElement(el) {
@@ -406,15 +414,56 @@ window.addEventListener('pageshow', function (event) {
     const descriptionInput = document.getElementById('inventory-description');
     const quantityInput = document.getElementById('inventory-quantity');
     const isMainInput = document.getElementById('inventory-is-main-sku');
+    const mainSkuField = document.getElementById('inventory-main-sku-field');
+    const alternateContext = document.getElementById('inventory-alternate-context');
+    const submitBtn = document.getElementById('inventory-form-submit');
+    const errorBox = document.getElementById('inventory-form-error');
+    const warningsBox = document.getElementById('inventory-form-warnings');
+    const warningsList = document.getElementById('inventory-form-warnings-list');
+    const locationInputs = [sheetInput, rackInput, binInput].filter(Boolean);
     const defaultSheet = sheetInput?.value || '';
+    const defaultSubmitLabel = submitBtn?.textContent || 'Save';
 
     if (!modalEl || !form) {
         return;
     }
 
-    function resetFormForCreate() {
+    function showInventoryModal() {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    function setLocationFieldsLocked(locked) {
+        locationInputs.forEach(function (input) {
+            input.readOnly = locked;
+            input.classList.toggle('bg-body-secondary', locked);
+        });
+    }
+
+    function setFormModeEdit() {
+        form.dataset.formMode = 'edit';
+        setLocationFieldsLocked(false);
+
+        if (mainSkuField) {
+            mainSkuField.classList.remove('d-none');
+        }
+
+        if (alternateContext) {
+            alternateContext.classList.add('d-none');
+            alternateContext.textContent = '';
+        }
+
+        if (submitBtn) {
+            submitBtn.textContent = defaultSubmitLabel;
+        }
+    }
+
+    function configureMainAddForm() {
+        clearFormFeedback();
         form.action = inventoryStoreUrl;
-        modalTitle.textContent = 'Add Inventory Row';
+        form.dataset.formMode = 'main';
+        modalTitle.textContent = 'Add Main SKU';
+        setLocationFieldsLocked(false);
+
         if (sheetInput) sheetInput.value = defaultSheet;
         if (rackInput) rackInput.value = '';
         if (binInput) binInput.value = '';
@@ -422,10 +471,267 @@ window.addEventListener('pageshow', function (event) {
         if (nameInput) nameInput.value = '';
         if (descriptionInput) descriptionInput.value = '';
         if (quantityInput) quantityInput.value = '0';
-        if (isMainInput) isMainInput.checked = false;
+
+        if (isMainInput) {
+            isMainInput.checked = true;
+        }
+
+        if (mainSkuField) {
+            mainSkuField.classList.add('d-none');
+        }
+
+        if (alternateContext) {
+            alternateContext.classList.add('d-none');
+            alternateContext.textContent = '';
+        }
+
+        if (submitBtn) {
+            submitBtn.textContent = 'Add Main SKU';
+        }
+
+        showInventoryModal();
     }
 
-    addBtn?.addEventListener('click', resetFormForCreate);
+    function configureAlternateAddForm(sheetName, rack, bin, mainSku) {
+        clearFormFeedback();
+        form.action = inventoryStoreUrl;
+        form.dataset.formMode = 'alternate';
+        modalTitle.textContent = 'Add Alternate SKU';
+        setLocationFieldsLocked(true);
+
+        if (sheetInput) sheetInput.value = sheetName;
+        if (rackInput) rackInput.value = rack;
+        if (binInput) binInput.value = bin;
+        if (skuInput) skuInput.value = '';
+        if (nameInput) nameInput.value = '';
+        if (descriptionInput) descriptionInput.value = '';
+        if (quantityInput) quantityInput.value = '0';
+
+        if (isMainInput) {
+            isMainInput.checked = false;
+        }
+
+        if (mainSkuField) {
+            mainSkuField.classList.add('d-none');
+        }
+
+        if (alternateContext) {
+            alternateContext.textContent = 'Alternate SKU for main SKU '
+                + mainSku
+                + ' at Sheet '
+                + sheetName
+                + ', Rack '
+                + rack
+                + ', Bin '
+                + bin
+                + '.';
+            alternateContext.classList.remove('d-none');
+        }
+
+        if (submitBtn) {
+            submitBtn.textContent = 'Add Alternate SKU';
+        }
+
+        showInventoryModal();
+    }
+
+    function clearFormFeedback() {
+        form.dataset.confirmed = '';
+        form.dataset.awaitingConfirm = '';
+
+        if (errorBox) {
+            errorBox.classList.add('d-none');
+            errorBox.textContent = '';
+        }
+
+        if (warningsBox) {
+            warningsBox.classList.add('d-none');
+        }
+
+        if (warningsList) {
+            warningsList.innerHTML = '';
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = form.dataset.formMode === 'main'
+                ? 'Add Main SKU'
+                : form.dataset.formMode === 'alternate'
+                    ? 'Add Alternate SKU'
+                    : defaultSubmitLabel;
+        }
+    }
+
+    function showFormError(message) {
+        form.dataset.confirmed = '';
+        form.dataset.awaitingConfirm = '';
+
+        if (warningsBox) {
+            warningsBox.classList.add('d-none');
+        }
+
+        if (warningsList) {
+            warningsList.innerHTML = '';
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = form.dataset.formMode === 'main'
+                ? 'Add Main SKU'
+                : form.dataset.formMode === 'alternate'
+                    ? 'Add Alternate SKU'
+                    : defaultSubmitLabel;
+        }
+
+        if (!errorBox) {
+            window.alert(message);
+            return;
+        }
+
+        errorBox.textContent = message;
+        errorBox.classList.remove('d-none');
+    }
+
+    function showFormWarnings(warnings) {
+        if (errorBox) {
+            errorBox.classList.add('d-none');
+            errorBox.textContent = '';
+        }
+
+        if (!warningsBox || !warningsList) {
+            return;
+        }
+
+        warningsList.innerHTML = '';
+        warnings.forEach(function (warning) {
+            const item = document.createElement('li');
+            item.textContent = warning;
+            warningsList.appendChild(item);
+        });
+
+        warningsBox.classList.remove('d-none');
+        form.dataset.awaitingConfirm = '1';
+
+        if (submitBtn) {
+            submitBtn.textContent = 'Save anyway';
+        }
+    }
+
+    function getEditIdFromFormAction() {
+        const match = String(form.action || '').match(/inventory\/(\d+)(?:\/|$|\?)/);
+
+        return match ? match[1] : '';
+    }
+
+    addBtn?.addEventListener('click', configureMainAddForm);
+
+    document.addEventListener('click', function (event) {
+        const button = event.target.closest('.add-alternate-sku');
+
+        if (!button) {
+            return;
+        }
+
+        configureAlternateAddForm(
+            button.dataset.sheetName || '',
+            button.dataset.rack || '',
+            button.dataset.bin || '',
+            button.dataset.mainSku || '',
+        );
+    });
+
+    modalEl.addEventListener('hidden.bs.modal', function () {
+        clearFormFeedback();
+        setFormModeEdit();
+    });
+
+    form.querySelectorAll('input, textarea, select').forEach(function (field) {
+        field.addEventListener('input', function () {
+            if (form.dataset.awaitingConfirm === '1' || (errorBox && !errorBox.classList.contains('d-none'))) {
+                clearFormFeedback();
+            }
+        });
+    });
+
+    form.addEventListener('submit', function (event) {
+        if (form.dataset.confirmed === '1') {
+            form.dataset.confirmed = '';
+            return;
+        }
+
+        event.preventDefault();
+
+        if (form.dataset.awaitingConfirm === '1') {
+            form.dataset.awaitingConfirm = '';
+            form.dataset.confirmed = '1';
+            form.submit();
+            return;
+        }
+
+        if (!form.reportValidity()) {
+            return;
+        }
+
+        const formData = new FormData(form);
+        const editId = getEditIdFromFormAction();
+
+        if (editId !== '') {
+            formData.set('id', editId);
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
+        }
+
+        fetch(inventoryValidateUrl, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+            },
+        })
+            .then(function (response) {
+                return response.json().then(function (data) {
+                    return { ok: response.ok, data: data };
+                });
+            })
+            .then(function (result) {
+                const data = result.data || {};
+
+                if (!result.ok || !data.ok) {
+                    showFormError(data.message || 'Could not validate this inventory row.');
+                    return;
+                }
+
+                if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+                    showFormWarnings(data.warnings);
+                    return;
+                }
+
+                form.dataset.confirmed = '1';
+                form.submit();
+            })
+            .catch(function () {
+                showFormError('Could not validate this inventory row. Please try again.');
+            })
+            .finally(function () {
+                if (submitBtn && form.dataset.confirmed !== '1') {
+                    submitBtn.disabled = false;
+
+                    if (form.dataset.awaitingConfirm === '1') {
+                        submitBtn.textContent = 'Save anyway';
+                    } else if (form.dataset.formMode === 'main') {
+                        submitBtn.textContent = 'Add Main SKU';
+                    } else if (form.dataset.formMode === 'alternate') {
+                        submitBtn.textContent = 'Add Alternate SKU';
+                    } else {
+                        submitBtn.textContent = defaultSubmitLabel;
+                    }
+                }
+            });
+    });
 
     document.querySelectorAll('.edit-inventory-row').forEach(function (button) {
         button.addEventListener('click', function () {
@@ -434,6 +740,8 @@ window.addEventListener('pageshow', function (event) {
             if (!editUrl) {
                 return;
             }
+
+            clearFormFeedback();
 
             fetch(editUrl, {
                 headers: {
@@ -454,6 +762,7 @@ window.addEventListener('pageshow', function (event) {
 
                     const data = result.data;
                     form.action = editUrl;
+                    setFormModeEdit();
                     modalTitle.textContent = 'Edit Inventory Row';
                     if (sheetInput) sheetInput.value = data.sheet_name || '';
                     if (rackInput) rackInput.value = data.rack || '';
@@ -464,7 +773,7 @@ window.addEventListener('pageshow', function (event) {
                     if (quantityInput) quantityInput.value = String(data.quantity ?? 0);
                     if (isMainInput) isMainInput.checked = !!data.is_main_sku;
 
-                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    showInventoryModal();
                 })
                 .catch(function () {
                     window.alert('Could not load row for editing.');

@@ -27,6 +27,20 @@ $net32Exists = array_key_exists('sku_net32_exists', $location) && $location['sku
 <td class="text-end">
     <div class="d-flex flex-column align-items-end gap-1">
         <div class="btn-group btn-group-sm" role="group" aria-label="Row actions">
+            <?php if (! $isAlternate && ! empty($location['is_main_sku'])) : ?>
+            <button
+                type="button"
+                class="btn btn-outline-success add-alternate-sku"
+                data-sheet-name="<?= esc($location['sheet_name']) ?>"
+                data-rack="<?= esc($location['rack']) ?>"
+                data-bin="<?= esc($location['bin']) ?>"
+                data-main-sku="<?= esc($location['sku']) ?>"
+                title="Add alternate SKU"
+                aria-label="Add alternate SKU for <?= esc($location['sku']) ?>"
+            >
+                <i class="bi bi-plus-lg"></i>
+            </button>
+            <?php endif ?>
             <button
                 type="button"
                 class="btn btn-outline-primary check-inventory-qty"

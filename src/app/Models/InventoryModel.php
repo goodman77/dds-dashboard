@@ -33,14 +33,29 @@ class InventoryModel extends Model
 
     public function existsSku(string $sheetName, string $rack, string $bin, string $sku): bool
     {
+        return $this->findByPosition($sheetName, $rack, $bin, $sku) !== null;
+    }
+
+    public function findBySku(string $sku, ?int $excludeId = null): ?array
+    {
+        $sku = trim($sku);
+
+        if ($sku === '') {
+            return null;
+        }
+
         $this->builder = null;
 
-        return $this->where([
-            'sheet_name' => $sheetName,
-            'rack'       => $rack,
-            'bin'        => $bin,
-            'sku'        => $sku,
-        ])->first() !== null;
+        $builder = $this->where('LOWER(sku)', strtolower($sku));
+
+        if ($excludeId !== null) {
+            $builder->where('id !=', $excludeId);
+        }
+
+        $row = $builder->first();
+        $this->builder = null;
+
+        return $row;
     }
 
     /**
@@ -324,12 +339,12 @@ class InventoryModel extends Model
     {
         $this->builder = null;
 
-        $builder = $this->where('sheet_name', $sheetName)
-            ->where('rack', $rack)
-            ->where('bin', $bin);
+        $builder = $this->where('LOWER(sheet_name)', strtolower(trim($sheetName)))
+            ->where('LOWER(rack)', strtolower(trim($rack)))
+            ->where('LOWER(bin)', strtolower(trim($bin)));
 
         if ($sku !== null) {
-            $builder->where('sku', $sku);
+            $builder->where('LOWER(sku)', strtolower(trim($sku)));
         }
 
         if ($excludeId !== null) {
@@ -342,10 +357,115 @@ class InventoryModel extends Model
         return $row;
     }
 
+    public function findMainSkuInBin(string $sheetName, string $rack, string $bin, ?int $excludeId = null): ?array
+    {
+        $this->builder = null;
+
+        $builder = $this->where('LOWER(sheet_name)', strtolower(trim($sheetName)))
+            ->where('LOWER(rack)', strtolower(trim($rack)))
+            ->where('LOWER(bin)', strtolower(trim($bin)))
+            ->where('is_main_sku', 1);
+
+        if ($excludeId !== null) {
+            $builder->where('id !=', $excludeId);
+        }
+
+        $row = $builder->first();
+        $this->builder = null;
+
+        return $row;
+    }
+
+    /**
+     * Validate manual add/edit input and return non-blocking warnings for the form modal.
+     *
+     * @param array<string, mixed> $input
+     *
+     * @return array{
+     *     ok: bool,
+     *     message?: string,
+     *     warnings: list<string>,
+     *     net32?: array{exists: bool|null, warning: string|null}
+     * }
+     */
+    public function previewManualSave(array $input, ?int $id = null): array
+    {
+        $sheetName = trim((string) ($input['sheet_name'] ?? ''));
+        $rack      = trim((string) ($input['rack'] ?? ''));
+        $bin       = trim((string) ($input['bin'] ?? ''));
+        $sku       = trim((string) ($input['sku'] ?? ''));
+
+        if ($sheetName === '' || $rack === '' || $bin === '' || $sku === '') {
+            return [
+                'ok'       => false,
+                'message'  => 'Sheet, Rack, Bin, and SKU are required.',
+                'warnings' => [],
+            ];
+        }
+
+        $duplicateSku = $this->findBySku($sku, $id);
+
+        if ($duplicateSku !== null) {
+            return [
+                'ok'       => false,
+                'message'  => $this->buildDuplicateSkuMessage($duplicateSku),
+                'warnings' => [],
+            ];
+        }
+
+        if ($this->findByPosition($sheetName, $rack, $bin, $sku, $id) !== null) {
+            return [
+                'ok'       => false,
+                'message'  => $this->buildDuplicateSkuMessage([
+                    'sku'        => $sku,
+                    'sheet_name' => $sheetName,
+                    'rack'       => $rack,
+                    'bin'        => $bin,
+                ]),
+                'warnings' => [],
+            ];
+        }
+
+        $isMainSku = ! empty($input['is_main_sku']);
+        $mainSkuAtBin = $this->findMainSkuInBin($sheetName, $rack, $bin, $id);
+
+        if ($id === null) {
+            if ($isMainSku && $mainSkuAtBin !== null) {
+                return [
+                    'ok'       => false,
+                    'message'  => sprintf(
+                        'A main SKU already exists at Sheet %s, Rack %s, Bin %s (SKU %s).',
+                        (string) ($mainSkuAtBin['sheet_name'] ?? $sheetName),
+                        (string) ($mainSkuAtBin['rack'] ?? $rack),
+                        (string) ($mainSkuAtBin['bin'] ?? $bin),
+                        (string) ($mainSkuAtBin['sku'] ?? ''),
+                    ),
+                    'warnings' => [],
+                ];
+            }
+
+            if (! $isMainSku && $mainSkuAtBin === null) {
+                return [
+                    'ok'       => false,
+                    'message'  => 'Add a main SKU for this Sheet, Rack, and Bin before adding an alternate SKU.',
+                    'warnings' => [],
+                ];
+            }
+        }
+
+        $validation = $this->validateManualSave($sheetName, $sku);
+
+        return [
+            'ok'       => true,
+            'warnings' => $validation['warnings'],
+            'net32'    => $validation['net32'],
+        ];
+    }
+
     /**
      * @param array<string, mixed> $input
      *
-     * @return array{ok: bool, message: string, id?: int}
+     * @return array{ok: bool, message: string, id?: int, warnings?: list<string>}
      */
     public function saveFromInput(array $input, ?int $id = null): array
     {
@@ -357,13 +477,14 @@ class InventoryModel extends Model
         $description = trim((string) ($input['description'] ?? ''));
         $quantity  = max(0, (int) ($input['quantity'] ?? 0));
 
-        if ($sheetName === '' || $rack === '' || $bin === '' || $sku === '') {
-            return ['ok' => false, 'message' => 'Sheet, Rack, Bin, and SKU are required.'];
+        $preview = $this->previewManualSave($input, $id);
+
+        if (! $preview['ok']) {
+            return ['ok' => false, 'message' => $preview['message'] ?? 'Validation failed.'];
         }
 
-        if ($this->findByPosition($sheetName, $rack, $bin, $sku, $id) !== null) {
-            return ['ok' => false, 'message' => 'An inventory row already exists for this Sheet, Rack, Bin, and SKU.'];
-        }
+        $warnings        = $preview['warnings'];
+        $net32Inspection = $preview['net32'] ?? ['exists' => null, 'warning' => null];
 
         $record = [
             'sheet_name'  => $sheetName,
@@ -376,18 +497,26 @@ class InventoryModel extends Model
             'quantity'    => $quantity,
         ];
 
+        $this->applyNet32InspectionToRecord($record, $net32Inspection);
+
         if ($id === null) {
             $this->builder = null;
 
             if ($this->insert($record) === false) {
+                $duplicateSku = $this->findBySku($sku);
+
+                if ($duplicateSku !== null) {
+                    return ['ok' => false, 'message' => $this->buildDuplicateSkuMessage($duplicateSku)];
+                }
+
                 return ['ok' => false, 'message' => 'Could not save inventory row.'];
             }
 
-            return [
+            return $this->withWarnings([
                 'ok'      => true,
                 'message' => 'Inventory row added.',
                 'id'      => (int) $this->getInsertID(),
-            ];
+            ], $warnings);
         }
 
         $existing = $this->find($id);
@@ -399,6 +528,7 @@ class InventoryModel extends Model
         if (strcasecmp((string) ($existing['sku'] ?? ''), $sku) !== 0) {
             $record['sku_net32_exists'] = null;
             $record['net32_checked_at'] = null;
+            $this->applyNet32InspectionToRecord($record, $net32Inspection);
         }
 
         $activityLog = service('activityLog');
@@ -412,6 +542,7 @@ class InventoryModel extends Model
             ? $this->buildQuantitySyncRows($existing, $alternateRows, $isMainSkuUpdate)
             : [];
         $syncedAt = date('Y-m-d H:i:s');
+        $syncedToNet32 = false;
 
         if ($quantityChanged) {
             $quantityCheck = service('inventoryQuantityCheck');
@@ -420,6 +551,16 @@ class InventoryModel extends Model
                 $syncSku = trim((string) ($syncRow['sku'] ?? ''));
 
                 if ($syncSku === '') {
+                    continue;
+                }
+
+                $syncInspection = $quantityCheck->inspectSkuInNet32($syncSku);
+
+                if ($syncInspection['exists'] !== true) {
+                    if ($syncInspection['warning'] !== null) {
+                        $warnings[] = $syncInspection['warning'];
+                    }
+
                     continue;
                 }
 
@@ -437,10 +578,13 @@ class InventoryModel extends Model
 
                     return ['ok' => false, 'message' => $net32Result['message']];
                 }
+
+                $syncedToNet32 = true;
             }
 
-            $record['sku_net32_exists'] = 1;
-            $record['net32_checked_at'] = $syncedAt;
+            $this->applyNet32InspectionToRecord($record, $net32Inspection, $syncedAt);
+        } elseif (! isset($record['sku_net32_exists'])) {
+            $this->applyNet32InspectionToRecord($record, $net32Inspection, $syncedAt);
         }
 
         $this->builder = null;
@@ -464,11 +608,22 @@ class InventoryModel extends Model
                     continue;
                 }
 
+                $alternateInspection = service('inventoryQuantityCheck')->inspectSkuInNet32($alternateSku);
                 $alternateRecord = [
                     'quantity'         => $quantity,
-                    'sku_net32_exists' => 1,
                     'net32_checked_at' => $syncedAt,
                 ];
+
+                if ($alternateInspection['exists'] === true) {
+                    $alternateRecord['sku_net32_exists'] = 1;
+                } elseif ($alternateInspection['exists'] === false) {
+                    $alternateRecord['sku_net32_exists'] = 0;
+
+                    if ($alternateInspection['warning'] !== null) {
+                        $warnings[] = $alternateInspection['warning'];
+                    }
+                }
+
                 $alternateChanges = $activityLog->detectInventoryChanges(
                     $alternate,
                     array_merge($alternate, $alternateRecord),
@@ -495,13 +650,13 @@ class InventoryModel extends Model
             }
         }
 
-        return [
+        return $this->withWarnings([
             'ok'      => true,
             'message' => $quantityChanged
-                ? $this->buildQuantityUpdatedMessage($quantity, $updatedSkus)
+                ? $this->buildQuantityUpdatedMessage($quantity, $updatedSkus, $syncedToNet32)
                 : 'Inventory row updated.',
             'id'      => $id,
-        ];
+        ], $warnings);
     }
 
     /**
@@ -543,7 +698,7 @@ class InventoryModel extends Model
     /**
      * @param list<string> $skus
      */
-    private function buildQuantityUpdatedMessage(int $quantity, array $skus): string
+    private function buildQuantityUpdatedMessage(int $quantity, array $skus, bool $syncedToNet32 = true): string
     {
         $skus = array_values(array_unique(array_filter(array_map(
             static fn (string $sku): string => trim($sku),
@@ -551,15 +706,90 @@ class InventoryModel extends Model
         ))));
 
         if ($skus === []) {
-            return 'Inventory row updated and quantity synced to Net32.';
+            return $syncedToNet32
+                ? 'Inventory row updated and quantity synced to Net32.'
+                : 'Inventory row updated.';
         }
 
-        return sprintf(
-            'Quantity set to %s for %s: %s. Synced to Net32.',
+        $base = sprintf(
+            'Quantity set to %s for %s: %s.',
             number_format($quantity),
             count($skus) === 1 ? 'SKU' : 'SKUs',
             implode(', ', $skus),
         );
+
+        return $syncedToNet32 ? $base . ' Synced to Net32.' : $base;
+    }
+
+    /**
+     * @param array<string, mixed> $existing
+     */
+    private function buildDuplicateSkuMessage(array $existing): string
+    {
+        return sprintf(
+            'SKU "%s" already exists at Sheet %s, Rack %s, Bin %s.',
+            (string) ($existing['sku'] ?? ''),
+            (string) ($existing['sheet_name'] ?? ''),
+            (string) ($existing['rack'] ?? ''),
+            (string) ($existing['bin'] ?? ''),
+        );
+    }
+
+    /**
+     * @return array{
+     *     warnings: list<string>,
+     *     net32: array{exists: bool|null, warning: string|null}
+     * }
+     */
+    private function validateManualSave(string $sheetName, string $sku): array
+    {
+        $warnings = [];
+
+        if (! service('googleSheets')->sheetExists($sheetName)) {
+            $warnings[] = sprintf('Warning: Sheet "%s" was not found in Google Sheets.', $sheetName);
+        }
+
+        $net32 = service('inventoryQuantityCheck')->inspectSkuInNet32($sku);
+
+        if ($net32['warning'] !== null) {
+            $warnings[] = $net32['warning'];
+        }
+
+        return [
+            'warnings' => $warnings,
+            'net32'    => $net32,
+        ];
+    }
+
+    /**
+     * @param array{exists: bool|null, warning: string|null} $inspection
+     * @param array<string, mixed> $record
+     */
+    private function applyNet32InspectionToRecord(array &$record, array $inspection, ?string $checkedAt = null): void
+    {
+        if ($inspection['exists'] === null) {
+            return;
+        }
+
+        $record['sku_net32_exists'] = $inspection['exists'] ? 1 : 0;
+        $record['net32_checked_at'] = $checkedAt ?? date('Y-m-d H:i:s');
+    }
+
+    /**
+     * @param array{ok: bool, message: string, id?: int} $result
+     * @param list<string> $warnings
+     *
+     * @return array{ok: bool, message: string, id?: int, warnings?: list<string>}
+     */
+    private function withWarnings(array $result, array $warnings): array
+    {
+        $warnings = array_values(array_unique(array_filter($warnings)));
+
+        if ($warnings !== []) {
+            $result['warnings'] = $warnings;
+        }
+
+        return $result;
     }
 
     private function applyFilters(
