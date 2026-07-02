@@ -51,8 +51,10 @@ class InventoryImportService
         $syncedAt   = date('Y-m-d H:i:s');
         $sheetCount = 0;
         $grandTotal = 0;
+        $discoveredSheets = [];
 
         try {
+            $discoveredSheets = $this->sheets->refreshSheetNamesFromGoogle();
             $sheetNames = $this->resolveSheetNames($onlySheet);
         } catch (GoogleSheetsException $exception) {
             return $this->finish([
@@ -113,6 +115,7 @@ class InventoryImportService
                     'sheet'   => $sheetName,
                     'entries' => $entries,
                 ];
+                $this->sheets->rememberSheetName($sheetName);
                 $grandTotal += count($entries);
             } catch (GoogleSheetsException $exception) {
                 $errors[] = sprintf('Sheet "%s": %s', $sheetName, $exception->getMessage());
@@ -245,13 +248,15 @@ class InventoryImportService
         }
 
         return $this->finish([
-            'sheets'     => $sheetCount,
-            'scanned'    => $scanned,
-            'imported'   => $imported,
-            'skipped'    => $skipped,
-            'ignored'    => $ignored,
-            'errors'     => $errors,
-            'sheet_name' => $onlySheet,
+            'sheets'            => $sheetCount,
+            'scanned'           => $scanned,
+            'imported'          => $imported,
+            'skipped'           => $skipped,
+            'ignored'           => $ignored,
+            'errors'            => $errors,
+            'sheet_name'        => $onlySheet,
+            'discovered_sheets' => $discoveredSheets,
+            'sheet_names'       => $this->sheets->getSheetNameOptions(),
         ], $dryRun, $logActivity);
     }
 

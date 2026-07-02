@@ -512,6 +512,8 @@ class InventoryModel extends Model
                 return ['ok' => false, 'message' => 'Could not save inventory row.'];
             }
 
+            service('googleSheets')->rememberSheetName($sheetName);
+
             return $this->withWarnings([
                 'ok'      => true,
                 'message' => 'Inventory row added.',

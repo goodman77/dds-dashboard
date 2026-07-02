@@ -72,9 +72,13 @@ class BinLocations extends BaseController
     {
         $jobId = $this->request->getGet('job_id');
 
-        return $this->response->setJSON(
-            service('inventoryImportJob')->getStatus($jobId !== null ? (int) $jobId : null) ?? ['status' => 'none'],
-        );
+        $status = service('inventoryImportJob')->getStatus($jobId !== null ? (int) $jobId : null) ?? ['status' => 'none'];
+
+        if (is_array($status)) {
+            $status['sheet_names'] = $this->resolveSheetNameOptions();
+        }
+
+        return $this->response->setJSON($status);
     }
 
     public function show(int $id): ResponseInterface
@@ -171,15 +175,11 @@ class BinLocations extends BaseController
      */
     private function resolveSheetNameOptions(): array
     {
-        $configured = array_values(array_filter(array_map(
-            static fn (string $name): string => trim($name),
-            explode(',', config('GoogleSheets')->sheetNames),
-        )));
-
+        $sheets = service('googleSheets')->getSheetNameOptions();
         $existing = $this->bins->getSheetNames();
 
         return \App\Libraries\GoogleSheets\GoogleSheetsClient::sortNamesAscending(
-            array_merge($existing, $configured),
+            array_merge($sheets, $existing),
         );
     }
 

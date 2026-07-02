@@ -372,6 +372,9 @@ class InventoryImportJobService
             'started_at'         => $job['started_at'] ?? null,
             'finished_at'        => $job['finished_at'] ?? null,
             'errors'             => is_array($errors) ? array_values($errors) : [],
+            'discovered_sheets'  => is_array($progress['discovered_sheets'] ?? null)
+                ? array_values($progress['discovered_sheets'])
+                : [],
         ];
     }
 

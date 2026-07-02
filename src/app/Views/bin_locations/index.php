@@ -247,7 +247,8 @@
                 </div>
                 <div class="modal-body">
                     <p class="text-muted small">The import is queued and runs in the background (usually within a minute). Progress appears on the <a href="<?= site_url('logs') ?>">Logs</a> page with status <strong>Running</strong>, then <strong>Completed</strong> or <strong>Failed</strong>.</p>
-                    <div class="mb-3">
+                    <p class="text-muted small mb-0">New worksheet tabs (for example <strong>X</strong>) are added to the sheet dropdown automatically when <code>googleSheets.apiKey</code> is set in <code>.env</code> and an import runs.</p>
+                    <div class="mb-3 mt-3">
                         <label class="form-label">Which sheets should be imported?</label>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="import_scope" id="import-scope-all" value="all" checked>
@@ -361,6 +362,7 @@ const importStatusUrl = <?= json_encode(site_url('inventory/import-status')) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
 const inventoryValidateUrl = <?= json_encode(site_url('inventory/validate')) ?>;
+const inventorySheetNames = <?= json_encode(array_values($sheetNames), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const ALERT_DISMISS_MS = 20000;
 
 function dismissAlertElement(el) {
@@ -1008,12 +1010,67 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
         completePanel.classList.remove('d-none');
         completePanel.className = 'alert alert-' + (status.status === 'completed' ? 'success' : 'danger')
             + ' alert-dismissible fade show';
-        completeMessage.textContent = status.progress_message || 'Import finished.';
+
+        let message = status.progress_message || 'Import finished.';
+
+        if (Array.isArray(status.discovered_sheets) && status.discovered_sheets.length > 0) {
+            message += ' New sheet tab(s) added to the dropdown: ' + status.discovered_sheets.join(', ') + '.';
+        }
+
+        completeMessage.textContent = message;
+        updateSheetNameSelects(status.sheet_names || inventorySheetNames);
         setImportControlsDisabled(false);
         scheduleAlertDismiss(completePanel, ALERT_DISMISS_MS);
 
         if (status.job_id) {
             sessionStorage.setItem('inventory-import-complete-' + status.job_id, '1');
+        }
+    }
+
+    function updateSheetNameSelects(names) {
+        if (!Array.isArray(names) || names.length === 0) {
+            return;
+        }
+
+        const filterSelect = document.getElementById('sheet');
+        const selectedFilter = filterSelect?.value || '';
+        const importSelect = document.getElementById('import-sheet-name');
+        const selectedImport = importSelect?.value || '';
+        const datalist = document.getElementById('inventory-sheet-options');
+
+        if (filterSelect) {
+            filterSelect.innerHTML = '<option value="">All sheets</option>';
+            names.forEach(function (name) {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                if (name === selectedFilter) {
+                    option.selected = true;
+                }
+                filterSelect.appendChild(option);
+            });
+        }
+
+        if (importSelect) {
+            importSelect.innerHTML = '<option value="">Choose a sheet...</option>';
+            names.forEach(function (name) {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                if (name === selectedImport) {
+                    option.selected = true;
+                }
+                importSelect.appendChild(option);
+            });
+        }
+
+        if (datalist) {
+            datalist.innerHTML = '';
+            names.forEach(function (name) {
+                const option = document.createElement('option');
+                option.value = name;
+                datalist.appendChild(option);
+            });
         }
     }
 
@@ -1031,6 +1088,7 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
 
                 activeJobId = status.job_id;
                 setProgress(status);
+                updateSheetNameSelects(status.sheet_names || inventorySheetNames);
 
                 if (!status.is_active) {
                     clearInterval(pollTimer);
