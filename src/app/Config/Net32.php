@@ -28,7 +28,7 @@ class Net32 extends BaseConfig
     /**
      * Seconds to wait between Net32 API calls in bulk import/check commands.
      */
-    public float $requestDelaySeconds = 3.5;
+    public float $requestDelaySeconds = 2.0;
 
     /**
      * Seconds to wait before retrying after a 429 rate-limit response.
