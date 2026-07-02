@@ -6,8 +6,8 @@ use CodeIgniter\Config\BaseConfig;
 
 class Email extends BaseConfig
 {
-    public string $fromEmail  = 'info@ddssuply.com';
-    public string $fromName   = 'admin';
+    public string $fromEmail  = '';
+    public string $fromName   = 'DDS Dashboard';
     public string $recipients = '';
 
     /**
@@ -17,6 +17,8 @@ class Email extends BaseConfig
 
     /**
      * The mail sending protocol: mail, sendmail, smtp
+     *
+     * Use "mail" for PHP mail() on shared hosting (no SMTP credentials).
      */
     public string $protocol = 'mail';
 
@@ -82,7 +84,7 @@ class Email extends BaseConfig
     /**
      * Type of mail, either 'text' or 'html'
      */
-    public string $mailType = 'text';
+    public string $mailType = 'html';
 
     /**
      * Character set (utf-8, iso-8859-1, etc.)

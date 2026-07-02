@@ -404,25 +404,43 @@ class InventoryModel extends Model
         $activityLog = service('activityLog');
         $changes     = $activityLog->detectInventoryChanges($existing, $record);
         $quantityChanged = isset($changes['quantity']);
+        $isMainSkuUpdate = ! empty($existing['is_main_sku']);
+        $alternateRows   = $isMainSkuUpdate
+            ? $this->findAlternateSkusInBin($sheetName, $rack, $bin)
+            : [];
+        $quantitySyncRows = $quantityChanged
+            ? $this->buildQuantitySyncRows($existing, $alternateRows, $isMainSkuUpdate)
+            : [];
+        $syncedAt = date('Y-m-d H:i:s');
 
         if ($quantityChanged) {
-            $net32Result = service('inventoryQuantityCheck')->pushQuantityToNet32($sku, $quantity);
+            $quantityCheck = service('inventoryQuantityCheck');
 
-            if (! $net32Result['ok']) {
-                $activityLog->logInventoryEdit(
-                    $existing,
-                    $record,
-                    $id,
-                    $changes,
-                    'failed',
-                    $net32Result['message'],
-                );
+            foreach ($quantitySyncRows as $syncRow) {
+                $syncSku = trim((string) ($syncRow['sku'] ?? ''));
 
-                return ['ok' => false, 'message' => $net32Result['message']];
+                if ($syncSku === '') {
+                    continue;
+                }
+
+                $net32Result = $quantityCheck->pushQuantityToNet32($syncSku, $quantity);
+
+                if (! $net32Result['ok']) {
+                    $activityLog->logInventoryEdit(
+                        $existing,
+                        $record,
+                        $id,
+                        $changes,
+                        'failed',
+                        $net32Result['message'],
+                    );
+
+                    return ['ok' => false, 'message' => $net32Result['message']];
+                }
             }
 
             $record['sku_net32_exists'] = 1;
-            $record['net32_checked_at'] = date('Y-m-d H:i:s');
+            $record['net32_checked_at'] = $syncedAt;
         }
 
         $this->builder = null;
@@ -435,13 +453,113 @@ class InventoryModel extends Model
             $activityLog->logInventoryEdit($existing, $record, $id, $changes);
         }
 
+        $updatedSkus = [$sku];
+
+        if ($quantityChanged && $alternateRows !== []) {
+            foreach ($alternateRows as $alternate) {
+                $alternateId = (int) $alternate['id'];
+                $alternateSku = trim((string) ($alternate['sku'] ?? ''));
+
+                if ($alternateSku === '') {
+                    continue;
+                }
+
+                $alternateRecord = [
+                    'quantity'         => $quantity,
+                    'sku_net32_exists' => 1,
+                    'net32_checked_at' => $syncedAt,
+                ];
+                $alternateChanges = $activityLog->detectInventoryChanges(
+                    $alternate,
+                    array_merge($alternate, $alternateRecord),
+                );
+
+                if ($alternateChanges === []) {
+                    continue;
+                }
+
+                $this->builder = null;
+
+                if (! $this->update($alternateId, $alternateRecord)) {
+                    return ['ok' => false, 'message' => 'Could not update alternate SKU quantity.'];
+                }
+
+                $activityLog->logInventoryEdit(
+                    $alternate,
+                    array_merge($alternate, $alternateRecord),
+                    $alternateId,
+                    $alternateChanges,
+                );
+
+                $updatedSkus[] = $alternateSku;
+            }
+        }
+
         return [
             'ok'      => true,
             'message' => $quantityChanged
-                ? 'Inventory row updated and quantity synced to Net32.'
+                ? $this->buildQuantityUpdatedMessage($quantity, $updatedSkus)
                 : 'Inventory row updated.',
             'id'      => $id,
         ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function findAlternateSkusInBin(string $sheetName, string $rack, string $bin): array
+    {
+        $this->builder = null;
+
+        return $this->where([
+            'sheet_name'  => $sheetName,
+            'rack'        => $rack,
+            'bin'         => $bin,
+            'is_main_sku' => 0,
+        ])
+            ->orderBy('sku', 'ASC')
+            ->findAll();
+    }
+
+    /**
+     * @param array<string, mixed> $mainRow
+     * @param list<array<string, mixed>> $alternateRows
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function buildQuantitySyncRows(array $mainRow, array $alternateRows, bool $includeAlternates): array
+    {
+        $rows = [$mainRow];
+
+        if ($includeAlternates) {
+            foreach ($alternateRows as $alternate) {
+                $rows[] = $alternate;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param list<string> $skus
+     */
+    private function buildQuantityUpdatedMessage(int $quantity, array $skus): string
+    {
+        $skus = array_values(array_unique(array_filter(array_map(
+            static fn (string $sku): string => trim($sku),
+            $skus,
+        ))));
+
+        if ($skus === []) {
+            return 'Inventory row updated and quantity synced to Net32.';
+        }
+
+        return sprintf(
+            'Quantity set to %s for %s: %s. Synced to Net32.',
+            number_format($quantity),
+            count($skus) === 1 ? 'SKU' : 'SKUs',
+            implode(', ', $skus),
+        );
     }
 
     private function applyFilters(
