@@ -178,18 +178,18 @@ class BinLocations extends BaseController
             ->setJSON($result);
     }
 
-    public function store(): RedirectResponse
+    public function store(): ResponseInterface|RedirectResponse
     {
         $result = $this->bins->saveFromInput($this->request->getPost());
 
-        return $this->redirectFromSaveResult($result);
+        return $this->respondFromSaveResult($result);
     }
 
-    public function update(int $id): RedirectResponse
+    public function update(int $id): ResponseInterface|RedirectResponse
     {
         $result = $this->bins->saveFromInput($this->request->getPost(), $id);
 
-        return $this->redirectFromSaveResult($result);
+        return $this->respondFromSaveResult($result);
     }
 
     public function checkQuantity(int $id): ResponseInterface
@@ -368,10 +368,56 @@ class BinLocations extends BaseController
     }
 
     /**
-     * @param array{ok: bool, message: string} $result
+     * @param array{
+     *     ok: bool,
+     *     message: string,
+     *     needs_confirm?: bool,
+     *     warnings?: list<string>
+     * } $result
+     */
+    private function respondFromSaveResult(array $result): ResponseInterface|RedirectResponse
+    {
+        if ($this->request->isAJAX()) {
+            if (! empty($result['needs_confirm'])) {
+                return $this->response->setJSON([
+                    'ok'            => true,
+                    'needs_confirm' => true,
+                    'warnings'      => $result['warnings'] ?? [],
+                ]);
+            }
+
+            if ($result['ok']) {
+                session()->setFlashdata('success', $result['message']);
+
+                return $this->response->setJSON([
+                    'ok'      => true,
+                    'message' => $result['message'],
+                ]);
+            }
+
+            return $this->response
+                ->setStatusCode(422)
+                ->setJSON([
+                    'ok'      => false,
+                    'message' => $result['message'],
+                ]);
+        }
+
+        return $this->redirectFromSaveResult($result);
+    }
+
+    /**
+     * @param array{ok: bool, message: string, needs_confirm?: bool, warnings?: list<string>} $result
      */
     private function redirectFromSaveResult(array $result): RedirectResponse
     {
+        if (! empty($result['needs_confirm'])) {
+            return redirect()->to($this->inventoryUrl())->with(
+                'error',
+                $result['message'] ?? 'Please confirm the warnings before saving.',
+            );
+        }
+
         $redirect = redirect()->to($this->inventoryUrl());
 
         if ($result['ok']) {

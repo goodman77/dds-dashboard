@@ -489,7 +489,8 @@ class InventoryModel extends Model
             }
         }
 
-        $validation = $this->validateManualSave($sheetName, $sku);
+        $existingRow = $id !== null ? $this->find($id) : null;
+        $validation  = $this->validateManualSave($sheetName, $sku, $existingRow);
 
         return [
             'ok'       => true,
@@ -501,7 +502,13 @@ class InventoryModel extends Model
     /**
      * @param array<string, mixed> $input
      *
-     * @return array{ok: bool, message: string, id?: int, warnings?: list<string>}
+     * @return array{
+     *     ok: bool,
+     *     message: string,
+     *     id?: int,
+     *     warnings?: list<string>,
+     *     needs_confirm?: bool
+     * }
      */
     public function saveFromInput(array $input, ?int $id = null): array
     {
@@ -512,6 +519,7 @@ class InventoryModel extends Model
         $name      = trim((string) ($input['name'] ?? ''));
         $description = trim((string) ($input['description'] ?? ''));
         $quantity  = max(0, (int) ($input['quantity'] ?? 0));
+        $confirmWarnings = ! empty($input['confirm_warnings']);
 
         $preview = $this->previewManualSave($input, $id);
 
@@ -519,7 +527,17 @@ class InventoryModel extends Model
             return ['ok' => false, 'message' => $preview['message'] ?? 'Validation failed.'];
         }
 
-        $warnings        = $preview['warnings'];
+        $warnings = $preview['warnings'];
+
+        if ($warnings !== [] && ! $confirmWarnings) {
+            return [
+                'ok'            => true,
+                'needs_confirm' => true,
+                'warnings'      => $warnings,
+                'message'       => 'Please confirm the warnings before saving.',
+            ];
+        }
+
         $net32Inspection = $preview['net32'] ?? ['exists' => null, 'warning' => null];
 
         $record = [
@@ -592,7 +610,14 @@ class InventoryModel extends Model
                     continue;
                 }
 
-                $syncInspection = $quantityCheck->inspectSkuInNet32($syncSku);
+                if (
+                    strcasecmp($syncSku, $sku) === 0
+                    && ($net32Inspection['exists'] ?? null) === true
+                ) {
+                    $syncInspection = ['exists' => true, 'warning' => null];
+                } else {
+                    $syncInspection = $this->resolveNet32InspectionForRow($syncRow, $syncSku);
+                }
 
                 if ($syncInspection['exists'] !== true) {
                     if ($syncInspection['warning'] !== null) {
@@ -646,7 +671,7 @@ class InventoryModel extends Model
                     continue;
                 }
 
-                $alternateInspection = service('inventoryQuantityCheck')->inspectSkuInNet32($alternateSku);
+                $alternateInspection = $this->resolveNet32InspectionForRow($alternate, $alternateSku);
                 $alternateRecord = [
                     'quantity'         => $quantity,
                     'net32_checked_at' => $syncedAt,
@@ -779,7 +804,15 @@ class InventoryModel extends Model
      *     net32: array{exists: bool|null, warning: string|null}
      * }
      */
-    private function validateManualSave(string $sheetName, string $sku): array
+    /**
+     * @param array<string, mixed>|null $existingRow
+     *
+     * @return array{
+     *     warnings: list<string>,
+     *     net32: array{exists: bool|null, warning: string|null}
+     * }
+     */
+    private function validateManualSave(string $sheetName, string $sku, ?array $existingRow = null): array
     {
         $warnings = [];
 
@@ -787,7 +820,7 @@ class InventoryModel extends Model
             $warnings[] = sprintf('Warning: Sheet "%s" was not found in Google Sheets.', $sheetName);
         }
 
-        $net32 = service('inventoryQuantityCheck')->inspectSkuInNet32($sku);
+        $net32 = $this->resolveNet32InspectionForRow($existingRow ?? [], $sku);
 
         if ($net32['warning'] !== null) {
             $warnings[] = $net32['warning'];
@@ -797,6 +830,41 @@ class InventoryModel extends Model
             'warnings' => $warnings,
             'net32'    => $net32,
         ];
+    }
+
+    /**
+     * Reuse a recent Net32 status from the DB when the SKU has not changed.
+     *
+     * @param array<string, mixed> $row
+     *
+     * @return array{exists: bool|null, warning: string|null}
+     */
+    private function resolveNet32InspectionForRow(array $row, string $sku): array
+    {
+        $sku = trim($sku);
+
+        if ($sku === '') {
+            return ['exists' => null, 'warning' => null];
+        }
+
+        $rowSku = trim((string) ($row['sku'] ?? ''));
+
+        if (
+            $rowSku !== ''
+            && strcasecmp($rowSku, $sku) === 0
+            && ($row['net32_checked_at'] ?? null) !== null
+            && array_key_exists('sku_net32_exists', $row)
+            && $row['sku_net32_exists'] !== null
+        ) {
+            $exists = (bool) (int) $row['sku_net32_exists'];
+
+            return [
+                'exists'  => $exists,
+                'warning' => $exists ? null : sprintf('Warning: SKU %s was not found in Net32.', $sku),
+            ];
+        }
+
+        return service('inventoryQuantityCheck')->inspectSkuInNet32($sku);
     }
 
     /**

@@ -432,7 +432,6 @@ const importCsrfHash = <?= json_encode(csrf_hash()) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
 const qtySyncJobIdFromUrl = <?= json_encode((int) ($qtySyncJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
-const inventoryValidateUrl = <?= json_encode(site_url('inventory/validate')) ?>;
 const inventorySheetNames = <?= json_encode(array_values($sheetNames), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const ALERT_DISMISS_MS = 20000;
 
@@ -609,7 +608,6 @@ window.addEventListener('pageshow', function (event) {
     }
 
     function clearFormFeedback() {
-        form.dataset.confirmed = '';
         form.dataset.awaitingConfirm = '';
 
         if (errorBox) {
@@ -636,7 +634,6 @@ window.addEventListener('pageshow', function (event) {
     }
 
     function showFormError(message) {
-        form.dataset.confirmed = '';
         form.dataset.awaitingConfirm = '';
 
         if (warningsBox) {
@@ -726,21 +723,38 @@ window.addEventListener('pageshow', function (event) {
         });
     });
 
-    form.addEventListener('submit', function (event) {
-        if (form.dataset.confirmed === '1') {
-            form.dataset.confirmed = '';
+    function setSubmitButtonBusy(label) {
+        if (!submitBtn) {
             return;
         }
 
-        event.preventDefault();
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> '
+            + label;
+    }
+
+    function resetSubmitButtonLabel() {
+        if (!submitBtn) {
+            return;
+        }
+
+        submitBtn.disabled = false;
 
         if (form.dataset.awaitingConfirm === '1') {
-            form.dataset.awaitingConfirm = '';
-            form.dataset.confirmed = '1';
-            form.submit();
+            submitBtn.textContent = 'Save anyway';
             return;
         }
 
+        if (form.dataset.formMode === 'main') {
+            submitBtn.textContent = 'Add Main SKU';
+        } else if (form.dataset.formMode === 'alternate') {
+            submitBtn.textContent = 'Add Alternate SKU';
+        } else {
+            submitBtn.textContent = defaultSubmitLabel;
+        }
+    }
+
+    function submitInventoryForm(forceConfirm) {
         if (!form.reportValidity()) {
             return;
         }
@@ -752,12 +766,13 @@ window.addEventListener('pageshow', function (event) {
             formData.set('id', editId);
         }
 
-        if (submitBtn) {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking...';
+        if (forceConfirm) {
+            formData.set('confirm_warnings', '1');
         }
 
-        fetch(inventoryValidateUrl, {
+        setSubmitButtonBusy('Saving...');
+
+        fetch(form.action, {
             method: 'POST',
             body: formData,
             headers: {
@@ -773,37 +788,39 @@ window.addEventListener('pageshow', function (event) {
             .then(function (result) {
                 const data = result.data || {};
 
-                if (!result.ok || !data.ok) {
-                    showFormError(data.message || 'Could not validate this inventory row.');
-                    return;
-                }
-
-                if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+                if (data.needs_confirm && Array.isArray(data.warnings) && data.warnings.length > 0) {
                     showFormWarnings(data.warnings);
                     return;
                 }
 
-                form.dataset.confirmed = '1';
-                form.submit();
+                if (!result.ok || !data.ok) {
+                    showFormError(data.message || 'Could not save this inventory row.');
+                    return;
+                }
+
+                bootstrap.Modal.getInstance(modalEl)?.hide();
+                window.location.reload();
             })
             .catch(function () {
-                showFormError('Could not validate this inventory row. Please try again.');
+                showFormError('Could not save this inventory row. Please try again.');
             })
             .finally(function () {
-                if (submitBtn && form.dataset.confirmed !== '1') {
-                    submitBtn.disabled = false;
-
-                    if (form.dataset.awaitingConfirm === '1') {
-                        submitBtn.textContent = 'Save anyway';
-                    } else if (form.dataset.formMode === 'main') {
-                        submitBtn.textContent = 'Add Main SKU';
-                    } else if (form.dataset.formMode === 'alternate') {
-                        submitBtn.textContent = 'Add Alternate SKU';
-                    } else {
-                        submitBtn.textContent = defaultSubmitLabel;
-                    }
+                if (submitBtn?.disabled) {
+                    resetSubmitButtonLabel();
                 }
             });
+    }
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+
+        const forceConfirm = form.dataset.awaitingConfirm === '1';
+
+        if (forceConfirm) {
+            form.dataset.awaitingConfirm = '';
+        }
+
+        submitInventoryForm(forceConfirm);
     });
 
     document.querySelectorAll('.edit-inventory-row').forEach(function (button) {
