@@ -22,12 +22,13 @@ class ActivityLogModel extends Model
         'details',
         'reference_id',
         'created_at',
+        'updated_at',
     ];
     protected bool $allowEmptyInserts = false;
     protected bool $updateOnlyChanged = false;
     protected $useTimestamps         = true;
     protected $createdField          = 'created_at';
-    protected $updatedField          = '';
+    protected $updatedField          = 'updated_at';
     protected array $casts            = [
         'details' => '?json',
     ];
@@ -43,14 +44,21 @@ class ActivityLogModel extends Model
         ?int $userId = null,
         ?int $referenceId = null,
     ): int {
-        $this->insert([
+        $now  = date('Y-m-d H:i:s');
+        $data = [
             'user_id'      => $userId,
             'action'       => $action,
             'status'       => $status,
             'message'      => mb_substr($message, 0, 500),
             'details'      => $details,
             'reference_id' => $referenceId,
-        ]);
+        ];
+
+        if ($this->isTerminalStatus($status)) {
+            $data['updated_at'] = $now;
+        }
+
+        $this->insert($data);
 
         return (int) $this->getInsertID();
     }
@@ -62,6 +70,11 @@ class ActivityLogModel extends Model
             'message' => mb_substr($message, 0, 500),
             'details' => $details,
         ]);
+    }
+
+    private function isTerminalStatus(string $status): bool
+    {
+        return in_array($status, ['completed', 'failed', 'cancelled'], true);
     }
 
     /**

@@ -63,8 +63,9 @@
                     <table class="table table-striped table-hover mb-0">
                         <thead>
                             <tr>
-                                <th style="width: 190px;">Date (Pacific)</th>
-                                <th style="width: 180px;">Action</th>
+                                <th style="width: 170px;">Started (Pacific)</th>
+                                <th style="width: 170px;">Ended (Pacific)</th>
+                                <th style="width: 160px;">Action</th>
                                 <th style="width: 110px;">Status</th>
                                 <th>Message</th>
                                 <th style="width: 130px;">Actions</th>
@@ -73,7 +74,7 @@
                         <tbody>
                             <?php if ($entries === []) : ?>
                                 <tr>
-                                    <td colspan="5" class="text-center text-muted py-4">
+                                    <td colspan="6" class="text-center text-muted py-4">
                                         No activity logged yet. Inventory imports and quantity edits will appear here.
                                     </td>
                                 </tr>
@@ -89,9 +90,18 @@
                                         'queued'    => 'info',
                                         default     => 'secondary',
                                     };
-                                    $displayDate = format_log_datetime(
+                                    $displayStarted = format_log_datetime(
                                         isset($entry['created_at']) ? (string) $entry['created_at'] : null,
                                     );
+                                    $isActive = in_array($status, ['queued', 'running'], true);
+                                    $updatedAt = isset($entry['updated_at']) ? (string) $entry['updated_at'] : '';
+                                    $displayEnded = $isActive
+                                        ? 'In progress'
+                                        : format_log_datetime(
+                                            $updatedAt !== ''
+                                                ? $updatedAt
+                                                : (isset($entry['created_at']) ? (string) $entry['created_at'] : null),
+                                        );
                                     $canCancel = ! empty($entry['can_cancel']);
                                     $cancelRequested = ! empty($entry['cancel_requested']);
                                     $showCancelControl = $canCancel || $cancelRequested;
@@ -110,7 +120,8 @@
                                         data-log-id="<?= esc((string) ($entry['id'] ?? '')) ?>"
                                         <?= ! empty($entry['is_active']) ? 'data-log-active="1"' : '' ?>
                                     >
-                                        <td class="small text-nowrap"><?= esc($displayDate) ?></td>
+                                        <td class="small text-nowrap"><?= esc($displayStarted) ?></td>
+                                        <td class="small text-nowrap"><?= esc($displayEnded) ?></td>
                                         <td><?= esc($actionLabels[$entry['action']] ?? ucwords(str_replace('_', ' ', $entry['action']))) ?></td>
                                         <td>
                                             <span class="badge text-bg-<?= esc($statusClass) ?> log-status-badge"><?= esc(ucfirst($status)) ?></span>
