@@ -1,0 +1,4 @@
+.DS_Store
+
+# Local Python tooling (venv, credentials, service account keys)
+scripts/
