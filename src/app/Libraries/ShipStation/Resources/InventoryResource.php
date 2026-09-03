@@ -22,6 +22,11 @@ class InventoryResource
     /** @var array<string, list<array<string, mixed>>> */
     private array $skuInventoryCache = [];
 
+    /** @var list<array{inventory_warehouse_id: string, name: string, created_at: string|null}>|null */
+    private ?array $warehouseListCache = null;
+
+    private ?string $resolvedWarehouseId = null;
+
     public function __construct(
         private readonly ShipStationClient $client,
         private readonly ShipStationConfig $config,
@@ -45,8 +50,10 @@ class InventoryResource
             'page_size' => 100,
         ];
 
-        if ($restrictToConfiguredWarehouse && $this->config->warehouseId !== '') {
-            $query['inventory_warehouse_id'] = $this->config->warehouseId;
+        $configuredWarehouseId = $this->getConfiguredWarehouseId();
+
+        if ($restrictToConfiguredWarehouse && $configuredWarehouseId !== '') {
+            $query['inventory_warehouse_id'] = $configuredWarehouseId;
         }
 
         $response = $this->client->get('inventory', $query);
@@ -57,7 +64,102 @@ class InventoryResource
 
     public function getConfiguredWarehouseId(): string
     {
-        return trim($this->config->warehouseId);
+        if ($this->resolvedWarehouseId !== null) {
+            return $this->resolvedWarehouseId;
+        }
+
+        $configured = strtolower(trim($this->config->warehouseId));
+
+        if ($configured !== '' && $configured !== 'latest' && $configured !== 'auto') {
+            $this->resolvedWarehouseId = trim($this->config->warehouseId);
+
+            return $this->resolvedWarehouseId;
+        }
+
+        $latest = $this->findLatestWarehouseId();
+        $this->resolvedWarehouseId = $latest ?? '';
+
+        return $this->resolvedWarehouseId;
+    }
+
+    /**
+     * @return list<array{inventory_warehouse_id: string, name: string, created_at: string|null}>
+     */
+    public function listWarehouses(bool $forceRefresh = false): array
+    {
+        if (! $forceRefresh && $this->warehouseListCache !== null) {
+            return $this->warehouseListCache;
+        }
+
+        $warehouses = [];
+        $response   = $this->client->get('inventory_warehouses', ['page_size' => 100]);
+        $pages      = 0;
+
+        while (is_array($response) && $pages < 20) {
+            $items = $response['inventory_warehouses'] ?? $response['warehouses'] ?? [];
+
+            if (! is_array($items) || $items === []) {
+                break;
+            }
+
+            foreach ($items as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $warehouseId = $this->stringOrNull($item['inventory_warehouse_id'] ?? $item['warehouse_id'] ?? null);
+                $name        = $this->stringOrNull($item['name'] ?? null);
+
+                if ($warehouseId === null) {
+                    continue;
+                }
+
+                if ($name !== null) {
+                    $this->warehouseNameCache[$warehouseId] = $name;
+                }
+
+                $warehouses[] = [
+                    'inventory_warehouse_id' => $warehouseId,
+                    'name'                   => $name ?? $warehouseId,
+                    'created_at'             => $this->stringOrNull($item['created_at'] ?? null),
+                ];
+            }
+
+            $pages++;
+            $nextHref = $this->stringOrNull($response['links']['next']['href'] ?? null);
+
+            if ($nextHref === null) {
+                break;
+            }
+
+            $response = $this->client->getFromLink($nextHref);
+        }
+
+        $this->warehouseListCache = $warehouses;
+
+        return $warehouses;
+    }
+
+    public function findLatestWarehouseId(): ?string
+    {
+        $warehouses = $this->listWarehouses();
+
+        if ($warehouses === []) {
+            return null;
+        }
+
+        usort($warehouses, static function (array $left, array $right): int {
+            $leftCreated  = strtotime((string) ($left['created_at'] ?? '')) ?: 0;
+            $rightCreated = strtotime((string) ($right['created_at'] ?? '')) ?: 0;
+
+            if ($leftCreated !== $rightCreated) {
+                return $rightCreated <=> $leftCreated;
+            }
+
+            return strcmp((string) $right['inventory_warehouse_id'], (string) $left['inventory_warehouse_id']);
+        });
+
+        return $warehouses[0]['inventory_warehouse_id'] ?? null;
     }
 
     public function getConfiguredWarehouseLabel(): string
@@ -100,16 +202,10 @@ class InventoryResource
         $expectedLocation      = trim((string) $expectedLocation);
         $configuredWarehouseId = $this->getConfiguredWarehouseId();
 
-        if ($expectedLocation !== '') {
-            foreach ($rows as $row) {
-                if (($row['on_hand'] ?? 0) <= 0) {
-                    continue;
-                }
+        $configuredMatch = $this->findMatchingLocationRow($rows, $expectedLocation, $configuredWarehouseId);
 
-                if ($this->locationNamesMatch($expectedLocation, (string) ($row['location_name'] ?? ''))) {
-                    return $row;
-                }
-            }
+        if ($configuredMatch !== null) {
+            return $configuredMatch;
         }
 
         if ($configuredWarehouseId !== '') {
@@ -122,6 +218,12 @@ class InventoryResource
             if ($configuredRows !== []) {
                 return $this->pickHighestOnHandRow($configuredRows);
             }
+        }
+
+        $anyMatch = $this->findMatchingLocationRow($rows, $expectedLocation, null);
+
+        if ($anyMatch !== null) {
+            return $anyMatch;
         }
 
         $syncWarehouseId = $this->resolveSyncWarehouseId($sku, $expectedLocation);
@@ -236,16 +338,10 @@ class InventoryResource
             return null;
         }
 
-        if ($expectedLocation !== '') {
-            foreach ($rows as $row) {
-                if (($row['on_hand'] ?? 0) <= 0) {
-                    continue;
-                }
+        $configuredMatch = $this->findMatchingLocationRow($rows, $expectedLocation, $configuredWarehouseId);
 
-                if ($this->locationNamesMatch($expectedLocation, (string) ($row['location_name'] ?? ''))) {
-                    return $row['warehouse_id'];
-                }
-            }
+        if ($configuredMatch !== null) {
+            return $configuredMatch['warehouse_id'];
         }
 
         if ($configuredWarehouseId !== '') {
@@ -254,6 +350,12 @@ class InventoryResource
                     return $configuredWarehouseId;
                 }
             }
+        }
+
+        $anyMatch = $this->findMatchingLocationRow($rows, $expectedLocation, null);
+
+        if ($anyMatch !== null) {
+            return $anyMatch['warehouse_id'];
         }
 
         $totals = [];
@@ -344,28 +446,36 @@ class InventoryResource
     }
 
     /**
-     * @param list<array{
-     *     sku: string,
-     *     location_id: string|null,
-     *     location_name: string|null,
-     *     warehouse_id: string|null,
-     *     warehouse_name: string|null,
-     *     on_hand: int,
-     *     available: int,
-     *     in_configured_warehouse: bool
-     * }> $rows
+     * @param list<array<string, mixed>> $rows
      *
-     * @return array{
-     *     sku: string,
-     *     location_id: string|null,
-     *     location_name: string|null,
-     *     warehouse_id: string|null,
-     *     warehouse_name: string|null,
-     *     on_hand: int,
-     *     available: int,
-     *     in_configured_warehouse: bool
-     * }
+     * @return array<string, mixed>|null
      */
+    private function findMatchingLocationRow(array $rows, string $expectedLocation, ?string $warehouseId): ?array
+    {
+        $expectedLocation = trim($expectedLocation);
+        $warehouseId      = trim((string) $warehouseId);
+
+        if ($expectedLocation === '') {
+            return null;
+        }
+
+        foreach ($rows as $row) {
+            if (($row['on_hand'] ?? 0) <= 0) {
+                continue;
+            }
+
+            if ($warehouseId !== '' && ($row['warehouse_id'] ?? '') !== $warehouseId) {
+                continue;
+            }
+
+            if ($this->locationNamesMatch($expectedLocation, (string) ($row['location_name'] ?? ''))) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
     private function pickHighestOnHandRow(array $rows): array
     {
         usort($rows, static function (array $left, array $right): int {
@@ -461,7 +571,7 @@ class InventoryResource
      */
     public function listLocationsForWarehouse(?string $warehouseId = null, bool $forceRefresh = false): array
     {
-        $warehouseId = trim($warehouseId ?? $this->config->warehouseId);
+        $warehouseId = trim($warehouseId ?? $this->getConfiguredWarehouseId());
 
         if ($warehouseId === '') {
             return [];
@@ -502,7 +612,7 @@ class InventoryResource
     public function findLocationByName(string $locationName, ?string $warehouseId = null, bool $forceRefresh = false): ?array
     {
         $locationName = trim($locationName);
-        $warehouseId  = trim($warehouseId ?? $this->config->warehouseId);
+        $warehouseId  = trim($warehouseId ?? $this->getConfiguredWarehouseId());
 
         if ($locationName === '' || $warehouseId === '') {
             return null;
@@ -592,7 +702,7 @@ class InventoryResource
     public function findOrCreateLocationByName(string $locationName, ?string $warehouseId = null): array
     {
         $locationName = trim($locationName);
-        $warehouseId  = trim($warehouseId ?? $this->config->warehouseId);
+        $warehouseId  = trim($warehouseId ?? $this->getConfiguredWarehouseId());
 
         if ($locationName === '') {
             throw new \InvalidArgumentException('Location name is required.');

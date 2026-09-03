@@ -21,9 +21,11 @@ class ShipStation extends BaseConfig
     public string $apiKey = '';
 
     /**
-     * Default warehouse ID (e.g. se-251394). Leave empty to accept any warehouse.
+     * Inventory warehouse to treat as current.
+     * Use "latest" to pick the newest warehouse from ShipStation (by created_at).
+     * Or set a fixed ID such as se-257006.
      */
-    public string $warehouseId = '';
+    public string $warehouseId = 'latest';
 
     /**
      * Quantity to set when creating or fixing inventory at a bin location.

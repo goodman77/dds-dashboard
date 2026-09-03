@@ -212,12 +212,12 @@ class ShipStationLocationSyncService
             return ['ok' => false, 'message' => 'This row has no rack/bin location to sync.'];
         }
 
-        $configuredWarehouseId = trim((string) config('ShipStation')->warehouseId);
+        $configuredWarehouseId = $this->shipStationInventory->getConfiguredWarehouseId();
 
         if ($configuredWarehouseId === '') {
             return [
                 'ok'      => false,
-                'message' => 'ShipStation warehouse ID is not configured. Set shipstation.warehouseId in .env.',
+                'message' => 'Could not resolve the latest ShipStation warehouse. Check the API key or set shipstation.warehouseId in .env.',
             ];
         }
 
