@@ -118,7 +118,7 @@ class Services extends BaseService
 
         return new \App\Services\ShipStationLocationCheckService(
             model(\App\Models\InventoryModel::class),
-            static::shipStation(false)->inventory(),
+            static::shipStation()->inventory(),
         );
     }
 
@@ -130,7 +130,7 @@ class Services extends BaseService
 
         return new \App\Services\ShipStationLocationSyncService(
             model(\App\Models\InventoryModel::class),
-            static::shipStation(false)->inventory(),
+            static::shipStation()->inventory(),
             static::shipStationLocationCheck(false),
         );
     }

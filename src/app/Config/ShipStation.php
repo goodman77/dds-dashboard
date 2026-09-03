@@ -36,7 +36,8 @@ class ShipStation extends BaseConfig
     public int $timeout = 30;
 
     /**
-     * Seconds to wait between ShipStation API calls in bulk commands.
+     * Seconds to wait after a ShipStation write (move or create bin) in bulk sync.
+     * Missing and already-correct SKUs skip this delay.
      */
     public float $requestDelaySeconds = 1.0;
 

@@ -19,6 +19,9 @@ class InventoryResource
     /** @var array<string, list<array<string, mixed>>> */
     private array $warehouseLocationListCache = [];
 
+    /** @var array<string, list<array<string, mixed>>> */
+    private array $skuInventoryCache = [];
+
     public function __construct(
         private readonly ShipStationClient $client,
         private readonly ShipStationConfig $config,
@@ -157,6 +160,13 @@ class InventoryResource
      */
     public function listInventoryRowsForSku(string $sku, bool $restrictToConfiguredWarehouse = false): array
     {
+        $sku = trim($sku);
+        $cacheKey = $this->skuInventoryCacheKey($sku, $restrictToConfiguredWarehouse);
+
+        if ($sku !== '' && isset($this->skuInventoryCache[$cacheKey])) {
+            return $this->skuInventoryCache[$cacheKey];
+        }
+
         $items = $this->getInventoryBySku($sku, $restrictToConfiguredWarehouse);
         $rows  = [];
 
@@ -172,7 +182,21 @@ class InventoryResource
             }
         }
 
+        if ($sku !== '') {
+            $this->skuInventoryCache[$cacheKey] = $rows;
+        }
+
         return $rows;
+    }
+
+    public function forgetSkuInventory(string $sku): void
+    {
+        $sku = trim($sku);
+
+        unset(
+            $this->skuInventoryCache[$this->skuInventoryCacheKey($sku, false)],
+            $this->skuInventoryCache[$this->skuInventoryCacheKey($sku, true)],
+        );
     }
 
     /**
@@ -288,9 +312,19 @@ class InventoryResource
     {
         $locationId  = $this->stringOrNull($item['inventory_location_id'] ?? $item['location_id'] ?? null);
         $warehouseId = $this->stringOrNull($item['inventory_warehouse_id'] ?? $item['warehouse_id'] ?? null);
+        $locationName = $this->stringOrNull($item['location_name'] ?? $item['name'] ?? null);
+        $warehouseName = $this->stringOrNull($item['warehouse_name'] ?? $item['inventory_warehouse_name'] ?? null);
+
+        if ($locationId !== null && $locationName !== null) {
+            $this->locationNameCache[$locationId] = $locationName;
+        }
 
         if ($warehouseId === null && $locationId !== null) {
             $warehouseId = $this->getWarehouseIdForLocation($locationId);
+        }
+
+        if ($warehouseId !== null && $warehouseName !== null) {
+            $this->warehouseNameCache[$warehouseId] = $warehouseName;
         }
 
         $configuredWarehouseId = $this->getConfiguredWarehouseId();
@@ -298,9 +332,9 @@ class InventoryResource
         return [
             'sku'                     => trim($sku),
             'location_id'             => $locationId,
-            'location_name'           => $locationId !== null ? $this->getLocationName($locationId) : null,
+            'location_name'           => $locationName ?? ($locationId !== null ? $this->getLocationName($locationId) : null),
             'warehouse_id'            => $warehouseId,
-            'warehouse_name'          => $warehouseId !== null ? $this->getWarehouseName($warehouseId) : null,
+            'warehouse_name'          => $warehouseName ?? ($warehouseId !== null ? $this->getWarehouseName($warehouseId) : null),
             'on_hand'                 => max(0, (int) ($item['on_hand'] ?? $item['quantity'] ?? 0)),
             'available'               => max(0, (int) ($item['available'] ?? $item['available_quantity'] ?? 0)),
             'in_configured_warehouse' => $configuredWarehouseId !== ''
@@ -349,13 +383,28 @@ class InventoryResource
             return null;
         }
 
+        foreach ($this->warehouseLocationListCache as $warehouseId => $locations) {
+            foreach ($locations as $location) {
+                if (($location['inventory_location_id'] ?? null) === $locationId) {
+                    return (string) $warehouseId;
+                }
+            }
+        }
+
         try {
             $response = $this->client->get('inventory_locations/' . rawurlencode($locationId));
         } catch (ShipStationApiException) {
             return null;
         }
 
-        return $this->stringOrNull($response['inventory_warehouse_id'] ?? null);
+        $warehouseId = $this->stringOrNull($response['inventory_warehouse_id'] ?? null);
+        $name        = $this->stringOrNull($response['name'] ?? null);
+
+        if ($name !== null) {
+            $this->locationNameCache[$locationId] = $name;
+        }
+
+        return $warehouseId;
     }
 
     public function getLocationName(string $locationId): ?string
@@ -368,6 +417,17 @@ class InventoryResource
 
         if (array_key_exists($locationId, $this->locationNameCache)) {
             return $this->locationNameCache[$locationId];
+        }
+
+        foreach ($this->warehouseLocationListCache as $locations) {
+            foreach ($locations as $location) {
+                if (($location['inventory_location_id'] ?? null) === $locationId) {
+                    $name = $this->stringOrNull($location['name'] ?? null);
+                    $this->locationNameCache[$locationId] = $name;
+
+                    return $name;
+                }
+            }
         }
 
         $response = $this->client->get('inventory_locations/' . rawurlencode($locationId));
@@ -448,27 +508,18 @@ class InventoryResource
             return null;
         }
 
-        if ($forceRefresh) {
-            unset($this->warehouseLocationListCache[$warehouseId]);
-        }
+        foreach ($this->listLocationsForWarehouse($warehouseId, $forceRefresh) as $item) {
+            $name = $this->stringOrNull($item['name'] ?? null);
 
-        foreach ($this->iterateLocationPages($warehouseId) as $item) {
-            $locationId = $this->stringOrNull($item['inventory_location_id'] ?? $item['location_id'] ?? null);
-            $name       = $this->stringOrNull($item['name'] ?? null);
-
-            if ($locationId === null || $name === null) {
+            if ($name === null || ! $this->locationNamesMatch($locationName, $name)) {
                 continue;
             }
 
-            $this->locationNameCache[$locationId] = $name;
-
-            if ($this->locationNamesMatch($locationName, $name)) {
-                return [
-                    'inventory_location_id'  => $locationId,
-                    'inventory_warehouse_id' => $warehouseId,
-                    'name'                   => $name,
-                ];
-            }
+            return [
+                'inventory_location_id'  => (string) $item['inventory_location_id'],
+                'inventory_warehouse_id' => $warehouseId,
+                'name'                   => $name,
+            ];
         }
 
         return null;
@@ -601,6 +652,11 @@ class InventoryResource
         }
 
         $this->locationNameCache[$locationId] = $locationName;
+        $this->warehouseLocationListCache[$warehouseId][] = [
+            'inventory_location_id'  => $locationId,
+            'inventory_warehouse_id' => $warehouseId,
+            'name'                   => $locationName,
+        ];
 
         return [
             'inventory_location_id' => $locationId,
@@ -623,6 +679,7 @@ class InventoryResource
             'quantity'              => max(0, $quantity),
             'reason'                => $reason !== '' ? $reason : 'DDS dashboard location sync',
         ]);
+        $this->forgetSkuInventory($sku);
     }
 
     public function adjustInventoryAtLocation(string $locationId, string $sku, int $quantity, string $reason = ''): void
@@ -634,6 +691,7 @@ class InventoryResource
             'quantity'              => max(0, $quantity),
             'reason'                => $reason !== '' ? $reason : 'DDS dashboard location sync',
         ]);
+        $this->forgetSkuInventory($sku);
     }
 
     public function moveInventoryToLocation(
@@ -657,6 +715,7 @@ class InventoryResource
             'quantity'                  => $quantity,
             'reason'                    => $reason !== '' ? $reason : 'DDS dashboard location sync',
         ]);
+        $this->forgetSkuInventory($sku);
     }
 
     /**
@@ -665,6 +724,11 @@ class InventoryResource
     private function postInventoryUpdate(array $payload): void
     {
         $this->client->post('inventory', $payload);
+    }
+
+    private function skuInventoryCacheKey(string $sku, bool $restrictToConfiguredWarehouse): string
+    {
+        return ($restrictToConfiguredWarehouse ? '1' : '0') . ':' . $sku;
     }
 
     public function normalizeLocationName(string $location): string

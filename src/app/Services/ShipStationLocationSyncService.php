@@ -81,6 +81,7 @@ class ShipStationLocationSyncService
         };
 
         $emitProgress();
+        $this->warmupConfiguredWarehouseLocations();
 
         foreach ($rows as $row) {
             if ($shouldCancel !== null && $shouldCancel()) {
@@ -167,7 +168,10 @@ class ShipStationLocationSyncService
             }
 
             $emitProgress();
-            $this->sleepBetweenRequests($delaySeconds);
+
+            if ($this->shouldThrottleAfterResult($result)) {
+                $this->sleepBetweenRequests($delaySeconds);
+            }
         }
 
         return [
@@ -218,48 +222,99 @@ class ShipStationLocationSyncService
         }
 
         try {
+            $inventoryRows = $this->shipStationInventory->listInventoryRowsForSku($sku, false);
+
+            if ($inventoryRows === []) {
+                return $this->recordObservedState(
+                    $id,
+                    $sku,
+                    $expectedLocation,
+                    null,
+                    null,
+                    0,
+                    false,
+                    null,
+                    true,
+                    sprintf('SKU %s is not in ShipStation. Add it in ShipStation first, then sync the location here.', $sku),
+                    false,
+                );
+            }
+
             $syncWarehouseId = $this->shipStationInventory->resolveSyncWarehouseId($sku, $expectedLocation);
 
             if ($syncWarehouseId === null || $syncWarehouseId === '') {
-                $check = $this->locationCheck->checkRow($id);
-
-                return array_merge($check, [
-                    'ok'                 => false,
-                    'synced'             => false,
-                    'shipstation_exists' => false,
-                    'message'            => sprintf(
-                        'SKU %s is not in ShipStation. Add it in ShipStation first, then sync the location here.',
-                        $sku,
-                    ),
-                ]);
+                return $this->recordObservedState(
+                    $id,
+                    $sku,
+                    $expectedLocation,
+                    null,
+                    null,
+                    0,
+                    false,
+                    null,
+                    true,
+                    sprintf('SKU %s is not in ShipStation. Add it in ShipStation first, then sync the location here.', $sku),
+                    false,
+                );
             }
 
             $inConfiguredWarehouse = $syncWarehouseId === $configuredWarehouseId;
-            $target                = $this->shipStationInventory->findOrCreateLocationByName($expectedLocation, $syncWarehouseId);
-            $targetLocationId      = $target['inventory_location_id'];
             $sources               = $this->shipStationInventory->listInventoryInWarehouse($sku, $syncWarehouseId);
 
             if ($sources === []) {
-                $check = $this->locationCheck->checkRow($id);
-
-                return array_merge($check, [
-                    'ok'                 => false,
-                    'synced'             => false,
-                    'shipstation_exists' => false,
-                    'message'            => sprintf(
-                        'SKU %s has no on-hand quantity in ShipStation to sync.',
-                        $sku,
-                    ),
-                ]);
+                return $this->recordObservedState(
+                    $id,
+                    $sku,
+                    $expectedLocation,
+                    null,
+                    $this->shipStationInventory->getWarehouseName($syncWarehouseId),
+                    0,
+                    false,
+                    null,
+                    $inConfiguredWarehouse,
+                    sprintf('SKU %s has no on-hand quantity in ShipStation to sync.', $sku),
+                    false,
+                );
             }
 
-            if ($this->allStockAtLocation($sources, $targetLocationId)) {
-                $check = $this->locationCheck->checkRow($id);
+            $primary     = $this->pickPrimarySource($sources);
+            $totalOnHand = $this->sumOnHand($sources);
 
-                return array_merge($check, [
-                    'synced'  => false,
-                    'message' => 'ShipStation location already matches the sheet.',
-                ]);
+            if ($this->allStockAtExpectedName($sources, $expectedLocation)) {
+                return $this->recordObservedState(
+                    $id,
+                    $sku,
+                    $expectedLocation,
+                    $primary['location_name'] ?? $expectedLocation,
+                    $primary['warehouse_name'] ?? $this->shipStationInventory->getWarehouseName($syncWarehouseId),
+                    $totalOnHand,
+                    true,
+                    true,
+                    $inConfiguredWarehouse,
+                    'ShipStation location already matches the sheet.',
+                    true,
+                );
+            }
+
+            $target           = $this->shipStationInventory->findOrCreateLocationByName($expectedLocation, $syncWarehouseId);
+            $targetLocationId = $target['inventory_location_id'];
+
+            if ($this->allStockAtLocation($sources, $targetLocationId)) {
+                return $this->recordObservedState(
+                    $id,
+                    $sku,
+                    $expectedLocation,
+                    (string) ($target['name'] ?? $expectedLocation),
+                    $primary['warehouse_name'] ?? $this->shipStationInventory->getWarehouseName($syncWarehouseId),
+                    $totalOnHand,
+                    true,
+                    true,
+                    $inConfiguredWarehouse,
+                    'ShipStation location already matches the sheet.',
+                    true,
+                    false,
+                    ! empty($target['created']),
+                );
             }
 
             $movedCount  = 0;
@@ -324,22 +379,32 @@ class ShipStationLocationSyncService
                 );
             }
 
-            $check = $this->locationCheck->checkRow($id);
-
-            return array_merge($check, [
-                'ok'      => $check['ok'] ?? false,
-                'synced'  => false,
-                'message' => $message,
-            ]);
+            return $this->recordObservedState(
+                $id,
+                $sku,
+                $expectedLocation,
+                $primary['location_name'] ?? null,
+                $primary['warehouse_name'] ?? $this->shipStationInventory->getWarehouseName($syncWarehouseId),
+                $totalOnHand,
+                true,
+                $this->locationCheck->locationsMatch($expectedLocation, $primary['location_name'] ?? null),
+                $inConfiguredWarehouse,
+                $message,
+                true,
+            );
         } catch (ShipStationApiException $exception) {
             return array_merge($this->existingShipStationState($row), [
                 'ok'                => false,
+                'wrote'             => false,
+                'throttle'          => true,
                 'message'           => $exception->getMessage(),
                 'expected_location' => $expectedLocation,
             ]);
         } catch (\Throwable $exception) {
             return array_merge($this->existingShipStationState($row), [
                 'ok'                => false,
+                'wrote'             => false,
+                'throttle'          => true,
                 'message'           => $exception->getMessage(),
                 'expected_location' => $expectedLocation,
             ]);
@@ -395,6 +460,7 @@ class ShipStationLocationSyncService
         return [
             'ok'                      => true,
             'synced'                  => true,
+            'wrote'                   => true,
             'message'                 => $message,
             'shipstation_location'    => $locationName,
             'shipstation_warehouse'   => $warehouseName,
@@ -404,6 +470,139 @@ class ShipStationLocationSyncService
             'shipstation_exists'      => true,
             'in_configured_warehouse' => $inConfiguredWarehouse,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function recordObservedState(
+        int $id,
+        string $sku,
+        ?string $expectedLocation,
+        ?string $locationName,
+        ?string $warehouseName,
+        int $onHand,
+        bool $exists,
+        ?bool $locationMatches,
+        bool $inConfiguredWarehouse,
+        string $message,
+        bool $ok,
+        bool $synced = false,
+        bool $wrote = false,
+    ): array {
+        $checkedAt = date('Y-m-d H:i:s');
+
+        $this->inventory->update($id, [
+            'shipstation_location'         => $exists ? $locationName : null,
+            'shipstation_warehouse'        => $exists ? $warehouseName : null,
+            'shipstation_on_hand'          => $exists ? $onHand : null,
+            'shipstation_exists'           => $exists ? 1 : 0,
+            'shipstation_location_matches' => ! $exists || $locationMatches === null
+                ? null
+                : ($locationMatches ? 1 : 0),
+            'shipstation_checked_at'       => $checkedAt,
+        ]);
+
+        return [
+            'ok'                      => $ok,
+            'synced'                  => $synced,
+            'wrote'                   => $wrote,
+            'message'                 => $message,
+            'shipstation_location'    => $exists ? $locationName : null,
+            'shipstation_warehouse'   => $exists ? $warehouseName : null,
+            'shipstation_on_hand'     => $exists ? $onHand : null,
+            'expected_location'       => $expectedLocation,
+            'location_matches'        => $locationMatches,
+            'shipstation_exists'      => $exists,
+            'in_configured_warehouse' => $inConfiguredWarehouse,
+        ];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $sources
+     */
+    private function allStockAtExpectedName(array $sources, string $expectedLocation): bool
+    {
+        if ($sources === []) {
+            return false;
+        }
+
+        foreach ($sources as $source) {
+            $locationName = trim((string) ($source['location_name'] ?? ''));
+
+            if ($locationName === '' || ! $this->shipStationInventory->locationNamesMatch($expectedLocation, $locationName)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $sources
+     *
+     * @return array<string, mixed>
+     */
+    private function pickPrimarySource(array $sources): array
+    {
+        $best = $sources[0];
+
+        foreach ($sources as $source) {
+            if ((int) ($source['on_hand'] ?? 0) > (int) ($best['on_hand'] ?? 0)) {
+                $best = $source;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $sources
+     */
+    private function sumOnHand(array $sources): int
+    {
+        $total = 0;
+
+        foreach ($sources as $source) {
+            $total += max(0, (int) ($source['on_hand'] ?? 0));
+        }
+
+        return $total;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function shouldThrottleAfterResult(array $result): bool
+    {
+        if (! empty($result['wrote']) || ! empty($result['throttle'])) {
+            return true;
+        }
+
+        if (($result['shipstation_exists'] ?? null) === false) {
+            return false;
+        }
+
+        if (($result['ok'] ?? false) && empty($result['synced'])) {
+            return false;
+        }
+
+        return ! ($result['ok'] ?? false);
+    }
+
+    private function warmupConfiguredWarehouseLocations(): void
+    {
+        $warehouseId = $this->shipStationInventory->getConfiguredWarehouseId();
+
+        if ($warehouseId === '') {
+            return;
+        }
+
+        try {
+            $this->shipStationInventory->listLocationsForWarehouse($warehouseId);
+        } catch (ShipStationApiException) {
+            // First SKU that needs this warehouse will load locations.
+        }
     }
 
     private function appendWarehouseNote(string $message, bool $inConfiguredWarehouse, ?string $warehouseName): string
