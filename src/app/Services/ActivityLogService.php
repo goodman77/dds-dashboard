@@ -53,6 +53,49 @@ class ActivityLogService
     /**
      * @param array<string, mixed> $result
      */
+    public function logInventoryReconcile(array $result, string $status = 'completed'): void
+    {
+        $message = $this->buildInventoryReconcileMessage($result);
+
+        if ($status === 'completed' && ($result['scanned'] ?? 0) === 0 && ($result['sheets'] ?? 0) === 0 && ($result['errors'] ?? []) !== []) {
+            $status = 'failed';
+        }
+
+        $this->log('inventory_reconcile', $status, $message, $result);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    public function buildInventoryReconcileMessage(array $result): string
+    {
+        $scope = $this->formatImportSheetLabel(
+            isset($result['sheet_name']) ? (string) $result['sheet_name'] : null,
+        );
+
+        $message = sprintf(
+            '%s: Reconciled %d SKU(s) from Google Sheets. Added: %d, updated: %d, removed: %d, unchanged: %d, skipped (new, not in Net32): %d.',
+            $scope,
+            $result['scanned'] ?? 0,
+            $result['added'] ?? 0,
+            $result['updated'] ?? 0,
+            $result['removed'] ?? 0,
+            $result['unchanged'] ?? 0,
+            $result['ignored'] ?? 0,
+        );
+
+        $errors = $result['errors'] ?? [];
+
+        if ($errors !== []) {
+            $message .= ' Warnings: ' . implode(' ', array_slice($errors, 0, 2));
+        }
+
+        return $message;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
     public function buildInventoryImportMessage(array $result, ?string $sheetName = null): string
     {
         $scope = $this->formatImportSheetLabel($sheetName ?? (isset($result['sheet_name']) ? (string) $result['sheet_name'] : null));
@@ -80,7 +123,7 @@ class ActivityLogService
     {
         $sheetName = trim((string) $sheetName);
 
-        return $sheetName !== '' ? 'Sheet "' . $sheetName . '"' : 'All sheets';
+        return ($sheetName !== '' && $sheetName !== '*') ? 'Sheet "' . $sheetName . '"' : 'All sheets';
     }
 
     public function logInventoryImportStarted(int $jobId, ?string $sheetName, ?int $userId = null): int
@@ -95,8 +138,30 @@ class ActivityLogService
             'running',
             $message,
             [
-                'job_id'     => $jobId,
-                'sheet_name' => $sheetName,
+                'job_id'      => $jobId,
+                'sheet_name'  => $sheetName,
+                'import_mode' => 'import',
+            ],
+            $userId,
+            $jobId,
+        );
+    }
+
+    public function logInventoryReconcileStarted(int $jobId, ?string $sheetName, ?int $userId = null): int
+    {
+        $message = sprintf(
+            'Sheet reconcile started (%s).',
+            $this->formatImportSheetLabel($sheetName),
+        );
+
+        return $this->log(
+            'inventory_reconcile',
+            'running',
+            $message,
+            [
+                'job_id'      => $jobId,
+                'sheet_name'  => $sheetName,
+                'import_mode' => 'reconcile',
             ],
             $userId,
             $jobId,
@@ -144,6 +209,34 @@ class ActivityLogService
     }
 
     /**
+     * @param array<string, mixed> $result
+     */
+    public function logInventoryQtySyncResult(array $result, string $status = 'completed'): void
+    {
+        $message = $this->buildInventoryQtySyncMessage($result);
+
+        if ($status === 'completed' && ($result['total'] ?? 0) === 0 && ($result['errors'] ?? []) !== []) {
+            $status = 'failed';
+        }
+
+        $this->log('inventory_qty_sync', $status, $message, $result);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    public function logInventoryShipStationCheckResult(array $result, string $status = 'completed'): void
+    {
+        $message = $this->buildInventoryShipStationCheckMessage($result);
+
+        if ($status === 'completed' && ($result['total'] ?? 0) === 0 && ($result['errors'] ?? []) !== []) {
+            $status = 'failed';
+        }
+
+        $this->log('inventory_shipstation_check', $status, $message, $result);
+    }
+
+    /**
      * @param array<string, mixed> $details
      */
     public function updateInventoryQtySyncLog(int $logId, string $status, string $message, array $details = []): void
@@ -179,10 +272,148 @@ class ActivityLogService
         return $message;
     }
 
+    public function logInventoryShipStationCheckQueued(int $jobId, string $sheetName, ?int $userId = null): int
+    {
+        $sheetName = trim($sheetName);
+        $message   = $sheetName === InventoryShipStationCheckService::ALL_SHEETS
+            ? 'ShipStation location sync queued for all sheets. It will start within about a minute.'
+            : sprintf('ShipStation location sync queued for sheet "%s". It will start within about a minute.', $sheetName);
+
+        return $this->log(
+            'inventory_shipstation_check',
+            'queued',
+            $message,
+            [
+                'job_id'     => $jobId,
+                'sheet_name' => $sheetName,
+            ],
+            $userId,
+            $jobId,
+        );
+    }
+
+    public function logInventoryShipStationCheckStarted(int $jobId, string $sheetName, ?int $userId = null): int
+    {
+        $sheetName = trim($sheetName);
+        $message   = $sheetName === InventoryShipStationCheckService::ALL_SHEETS
+            ? 'ShipStation location sync started for all sheets.'
+            : sprintf('ShipStation location sync started for sheet "%s".', $sheetName);
+
+        return $this->log(
+            'inventory_shipstation_check',
+            'running',
+            $message,
+            [
+                'job_id'     => $jobId,
+                'sheet_name' => $sheetName,
+            ],
+            $userId,
+            $jobId,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    public function updateInventoryShipStationCheckLog(int $logId, string $status, string $message, array $details = []): void
+    {
+        $this->logs->updateEntry($logId, $status, $message, $details);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    public function buildInventoryShipStationCheckMessage(array $result): string
+    {
+        $sheetName = trim((string) ($result['sheet_name'] ?? ''));
+        $scope     = $sheetName === InventoryShipStationCheckService::ALL_SHEETS
+            ? 'All sheets'
+            : ($sheetName !== '' ? 'Sheet "' . $sheetName . '"' : 'Sheet');
+
+        $message = sprintf(
+            '%s: Synced %d SKU(s) in ShipStation. Moved: %d, matched: %d, mismatched: %d, missing: %d, empty location: %d.',
+            $scope,
+            $result['processed'] ?? 0,
+            $result['synced'] ?? 0,
+            $result['matched'] ?? 0,
+            $result['mismatched'] ?? 0,
+            $result['missing'] ?? 0,
+            $result['empty_location'] ?? 0,
+        );
+
+        $errors = $result['errors'] ?? [];
+
+        if ($errors !== []) {
+            $message .= ' Errors: ' . implode(' ', array_slice($errors, 0, 2));
+        }
+
+        return $message;
+    }
+
+    /**
+     * Fix activity log rows left on running/queued when the linked ShipStation check job already finished.
+     */
+    public function reconcileStaleShipStationCheckLogs(): void
+    {
+        $db = \Config\Database::connect();
+
+        $rows = $db->table('activity_logs al')
+            ->select('al.id AS log_id, j.id AS job_id, j.status AS job_status, j.progress_message, j.result, j.errors, j.sheet_name')
+            ->join(
+                'inventory_shipstation_check_jobs j',
+                'j.id = al.reference_id AND j.activity_log_id = al.id',
+                'inner',
+            )
+            ->where('al.action', 'inventory_shipstation_check')
+            ->whereIn('al.status', ['running', 'queued'])
+            ->whereIn('j.status', ['completed', 'failed', 'cancelled'])
+            ->get()
+            ->getResultArray();
+
+        foreach ($rows as $row) {
+            $result = $this->decodeJsonField($row['result'] ?? null);
+            $errors = $this->decodeJsonField($row['errors'] ?? null);
+
+            $details = is_array($result) ? $result : [];
+            $details['job_id']     = (int) $row['job_id'];
+            $details['sheet_name'] = $row['sheet_name'] ?? null;
+
+            if (is_array($errors) && $errors !== []) {
+                $details['errors'] = array_values($errors);
+            }
+
+            $jobStatus = (string) $row['job_status'];
+            $sheetName = isset($row['sheet_name']) ? (string) $row['sheet_name'] : null;
+
+            if ($jobStatus === 'completed' && is_array($result)) {
+                $message = $this->buildInventoryShipStationCheckMessage(
+                    array_merge($result, ['sheet_name' => $sheetName]),
+                );
+            } else {
+                $message = (string) ($row['progress_message'] ?? 'ShipStation location check finished.');
+            }
+
+            $this->updateInventoryShipStationCheckLog(
+                (int) $row['log_id'],
+                $jobStatus,
+                $message,
+                $details,
+            );
+        }
+    }
+
     /**
      * @param array<string, mixed> $details
      */
     public function updateInventoryImportLog(int $logId, string $status, string $message, array $details = []): void
+    {
+        $this->logs->updateEntry($logId, $status, $message, $details);
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    public function updateInventoryReconcileLog(int $logId, string $status, string $message, array $details = []): void
     {
         $this->logs->updateEntry($logId, $status, $message, $details);
     }
@@ -236,6 +467,36 @@ class ActivityLogService
         }
 
         return $changes;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    public function logInventoryDelete(array $row, ?int $userId = null): void
+    {
+        $sku = trim((string) ($row['sku'] ?? ''));
+        $message = sprintf(
+            'Deleted inventory row%s (%s / %s / %s). Google Sheet unchanged.',
+            $sku !== '' ? ' ' . $sku : '',
+            (string) ($row['sheet_name'] ?? ''),
+            (string) ($row['rack'] ?? ''),
+            (string) ($row['bin'] ?? ''),
+        );
+
+        $this->log(
+            'inventory_delete',
+            'completed',
+            $message,
+            [
+                'inventory_id' => (int) ($row['id'] ?? 0),
+                'sku'          => $sku,
+                'sheet_name'   => $row['sheet_name'] ?? null,
+                'rack'         => $row['rack'] ?? null,
+                'bin'          => $row['bin'] ?? null,
+            ],
+            $userId,
+            isset($row['id']) ? (int) $row['id'] : null,
+        );
     }
 
     /**

@@ -25,6 +25,12 @@ class InventoryModel extends Model
         'quantity',
         'sku_net32_exists',
         'net32_checked_at',
+        'shipstation_location',
+        'shipstation_warehouse',
+        'shipstation_on_hand',
+        'shipstation_exists',
+        'shipstation_checked_at',
+        'shipstation_location_matches',
         'synced_at',
     ];
     protected bool $allowEmptyInserts = false;
@@ -78,13 +84,14 @@ class InventoryModel extends Model
         string $group = 'bins',
         ?string $net32Filter = null,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ): array {
         if ($term !== null && $term !== '') {
-            return $this->paginateGroupedSearch($term, $sheetName, $perPage, $group, $net32Filter, $quantityFilter);
+            return $this->paginateGroupedSearch($term, $sheetName, $perPage, $group, $net32Filter, $quantityFilter, $shipStationFilter);
         }
 
         $this->builder = null;
-        $this->applyFilters($term, $sheetName, $net32Filter, $quantityFilter);
+        $this->applyFilters($term, $sheetName, $net32Filter, $quantityFilter, $shipStationFilter);
 
         return $this->applyListOrdering()
             ->paginate($perPage, $group);
@@ -102,10 +109,11 @@ class InventoryModel extends Model
         string $group,
         ?string $net32Filter,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ): array {
         $page   = max(1, (int) (service('pager')->getCurrentPage($group) ?: 1));
-        $total  = $this->countMatchingGroups($term, $sheetName, $net32Filter, $quantityFilter);
-        $groups = $this->getMatchingGroupKeysForPage($term, $sheetName, $net32Filter, $perPage, $page, $quantityFilter);
+        $total  = $this->countMatchingGroups($term, $sheetName, $net32Filter, $quantityFilter, $shipStationFilter);
+        $groups = $this->getMatchingGroupKeysForPage($term, $sheetName, $net32Filter, $perPage, $page, $quantityFilter, $shipStationFilter);
 
         $this->builder = null;
 
@@ -146,8 +154,9 @@ class InventoryModel extends Model
         ?string $sheetName,
         ?string $net32Filter,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ): int {
-        $builder = $this->buildFilteredQuery($term, $sheetName, $net32Filter, $quantityFilter);
+        $builder = $this->buildFilteredQuery($term, $sheetName, $net32Filter, $quantityFilter, $shipStationFilter);
 
         return $builder
             ->select('sheet_name, rack, bin')
@@ -165,10 +174,11 @@ class InventoryModel extends Model
         int $perPage,
         int $page,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ): array {
         $offset = ($page - 1) * $perPage;
 
-        $rows = $this->buildFilteredQuery($term, $sheetName, $net32Filter, $quantityFilter)
+        $rows = $this->buildFilteredQuery($term, $sheetName, $net32Filter, $quantityFilter, $shipStationFilter)
             ->select('sheet_name, rack, bin')
             ->groupBy(['sheet_name', 'rack', 'bin'])
             ->orderBy('sheet_name', 'ASC')
@@ -193,6 +203,7 @@ class InventoryModel extends Model
         ?string $sheetName,
         ?string $net32Filter,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ) {
         $builder = $this->db->table($this->table);
 
@@ -209,6 +220,12 @@ class InventoryModel extends Model
                 ->groupEnd();
         } elseif ($net32Filter === 'unchecked') {
             $builder->where('net32_checked_at', null);
+        }
+
+        if ($shipStationFilter === 'missing') {
+            $builder->where('shipstation_exists', 0);
+        } else {
+            $this->applyShipStationStatusFilter($builder, $shipStationFilter);
         }
 
         if ($quantityFilter === 'zero') {
@@ -338,6 +355,16 @@ class InventoryModel extends Model
     {
         $row = $this->db->table($this->table)
             ->selectMax('net32_checked_at', 'last_checked')
+            ->get()
+            ->getRowArray();
+
+        return isset($row['last_checked']) ? (string) $row['last_checked'] : null;
+    }
+
+    public function getLastShipStationCheckedAt(): ?string
+    {
+        $row = $this->db->table($this->table)
+            ->selectMax('shipstation_checked_at', 'last_checked')
             ->get()
             ->getRowArray();
 
@@ -740,6 +767,40 @@ class InventoryModel extends Model
     }
 
     /**
+     * @param array<string, mixed> $row
+     *
+     * @return array{ok: bool, message?: string}
+     */
+    public function canManuallyDeleteRow(array $row): array
+    {
+        if (empty($row['is_main_sku'])) {
+            return ['ok' => true];
+        }
+
+        $alternates = $this->findAlternateSkusInBin(
+            (string) ($row['sheet_name'] ?? ''),
+            (string) ($row['rack'] ?? ''),
+            (string) ($row['bin'] ?? ''),
+        );
+
+        if ($alternates === []) {
+            return ['ok' => true];
+        }
+
+        $count = count($alternates);
+
+        return [
+            'ok'      => false,
+            'message' => sprintf(
+                'Remove %d alternate SKU%s before deleting main SKU %s.',
+                $count,
+                $count === 1 ? '' : 's',
+                (string) ($row['sku'] ?? ''),
+            ),
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $mainRow
      * @param list<array<string, mixed>> $alternateRows
      *
@@ -898,11 +959,105 @@ class InventoryModel extends Model
         return $result;
     }
 
+    /**
+     * @param \CodeIgniter\Database\BaseBuilder $builder
+     */
+    private function applyShipStationStatusFilter($builder, ?string $shipStationFilter): void
+    {
+        if ($shipStationFilter === 'ok') {
+            $builder->groupStart()
+                ->where('shipstation_exists', 1)
+                ->where('shipstation_checked_at IS NOT NULL', null, false)
+                ->groupEnd();
+
+            return;
+        }
+
+        if ($shipStationFilter === 'wrong_warehouse') {
+            $configuredWarehouse = service('shipStationLocationCheck')->getConfiguredWarehouseNameForFilter();
+
+            $builder->where('shipstation_exists', 1);
+
+            if ($configuredWarehouse === null) {
+                $builder->where('1 = 0', null, false);
+
+                return;
+            }
+
+            $builder->groupStart()
+                ->where('shipstation_warehouse IS NOT NULL', null, false)
+                ->where('LOWER(shipstation_warehouse) !=', strtolower($configuredWarehouse))
+                ->groupEnd();
+
+            return;
+        }
+
+        if ($shipStationFilter === 'mismatch') {
+            $configuredWarehouse = service('shipStationLocationCheck')->getConfiguredWarehouseNameForFilter();
+
+            $builder->groupStart()
+                ->where('shipstation_exists', 1)
+                ->where('shipstation_location_matches', 0);
+
+            if ($configuredWarehouse !== null) {
+                $builder->where('LOWER(shipstation_warehouse)', strtolower($configuredWarehouse));
+            }
+
+            $builder->groupEnd();
+        }
+    }
+
+    private function applyShipStationStatusFilterToModel(?string $shipStationFilter): void
+    {
+        if ($shipStationFilter === 'ok') {
+            $this->groupStart()
+                ->where('shipstation_exists', 1)
+                ->where('shipstation_checked_at IS NOT NULL', null, false)
+                ->groupEnd();
+
+            return;
+        }
+
+        if ($shipStationFilter === 'wrong_warehouse') {
+            $configuredWarehouse = service('shipStationLocationCheck')->getConfiguredWarehouseNameForFilter();
+
+            $this->where('shipstation_exists', 1);
+
+            if ($configuredWarehouse === null) {
+                $this->where('1 = 0', null, false);
+
+                return;
+            }
+
+            $this->groupStart()
+                ->where('shipstation_warehouse IS NOT NULL', null, false)
+                ->where('LOWER(shipstation_warehouse) !=', strtolower($configuredWarehouse))
+                ->groupEnd();
+
+            return;
+        }
+
+        if ($shipStationFilter === 'mismatch') {
+            $configuredWarehouse = service('shipStationLocationCheck')->getConfiguredWarehouseNameForFilter();
+
+            $this->groupStart()
+                ->where('shipstation_exists', 1)
+                ->where('shipstation_location_matches', 0);
+
+            if ($configuredWarehouse !== null) {
+                $this->where('LOWER(shipstation_warehouse)', strtolower($configuredWarehouse));
+            }
+
+            $this->groupEnd();
+        }
+    }
+
     private function applyFilters(
         ?string $term,
         ?string $sheetName,
         ?string $net32Filter = null,
         ?string $quantityFilter = null,
+        ?string $shipStationFilter = null,
     ): void {
         if ($sheetName !== null && $sheetName !== '') {
             $this->where('sheet_name', $sheetName);
@@ -917,6 +1072,12 @@ class InventoryModel extends Model
                 ->groupEnd();
         } elseif ($net32Filter === 'unchecked') {
             $this->where('net32_checked_at', null);
+        }
+
+        if ($shipStationFilter === 'missing') {
+            $this->where('shipstation_exists', 0);
+        } else {
+            $this->applyShipStationStatusFilterToModel($shipStationFilter);
         }
 
         if ($quantityFilter === 'zero') {

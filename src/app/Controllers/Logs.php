@@ -24,8 +24,10 @@ class Logs extends BaseController
     public function index()
     {
         service('activityLog')->reconcileStaleImportLogs();
+        service('activityLog')->reconcileStaleShipStationCheckLogs();
         service('inventoryImportJob')->reconcileStuckJobs();
         service('inventoryQtySyncJob')->reconcileStuckJobs();
+        service('inventoryShipStationCheckJob')->reconcileStuckJobs();
 
         $actionFilter = trim((string) $this->request->getGet('action'));
         $perPage      = $this->resolvePerPage();
@@ -69,14 +71,16 @@ class Logs extends BaseController
         }
 
         $result = match ($action) {
-            'inventory_import' => service('inventoryImportJob')->requestCancel($jobId),
+            'inventory_import', 'inventory_reconcile' => service('inventoryImportJob')->requestCancel($jobId),
             'inventory_qty_sync' => service('inventoryQtySyncJob')->requestCancel($jobId),
+            'inventory_shipstation_check' => service('inventoryShipStationCheckJob')->requestCancel($jobId),
             default => ['ok' => false, 'message' => 'This log entry cannot be cancelled.'],
         };
 
         if ($result['ok']) {
             service('inventoryImportJob')->reconcileStuckJobs();
             service('inventoryQtySyncJob')->reconcileStuckJobs();
+            service('inventoryShipStationCheckJob')->reconcileStuckJobs();
         }
 
         return $this->response
@@ -104,7 +108,7 @@ class Logs extends BaseController
                 continue;
             }
 
-            if (! in_array($action, ['inventory_import', 'inventory_qty_sync'], true)) {
+            if (! in_array($action, ['inventory_import', 'inventory_reconcile', 'inventory_qty_sync', 'inventory_shipstation_check'], true)) {
                 continue;
             }
 
@@ -114,9 +118,12 @@ class Logs extends BaseController
                 continue;
             }
 
-            $jobStatus = $action === 'inventory_import'
-                ? service('inventoryImportJob')->getStatus($jobId)
-                : service('inventoryQtySyncJob')->getStatus($jobId);
+            $jobStatus = match ($action) {
+                'inventory_import', 'inventory_reconcile' => service('inventoryImportJob')->getStatus($jobId),
+                'inventory_qty_sync' => service('inventoryQtySyncJob')->getStatus($jobId),
+                'inventory_shipstation_check' => service('inventoryShipStationCheckJob')->getStatus($jobId),
+                default => null,
+            };
 
             if ($jobStatus === null) {
                 continue;

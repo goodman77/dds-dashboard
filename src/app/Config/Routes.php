@@ -19,12 +19,18 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
     $routes->get('inventory/(:num)', 'BinLocations::show/$1');
     $routes->post('inventory/(:num)', 'BinLocations::update/$1');
     $routes->post('inventory/(:num)/check-qty', 'BinLocations::checkQuantity/$1');
+    $routes->post('inventory/(:num)/check-shipstation', 'BinLocations::checkShipStationLocation/$1');
+    $routes->post('inventory/(:num)/sync-shipstation', 'BinLocations::syncShipStationLocation/$1');
+    $routes->post('inventory/(:num)/delete', 'BinLocations::destroy/$1');
     $routes->post('inventory/sync', 'BinLocations::sync');
     $routes->post('inventory/qty-sync', 'BinLocations::qtySync');
+    $routes->post('inventory/shipstation-check', 'BinLocations::shipStationCheck');
     $routes->post('inventory/import/cancel', 'BinLocations::cancelImport');
     $routes->post('inventory/qty-sync/cancel', 'BinLocations::cancelQtySync');
+    $routes->post('inventory/shipstation-check/cancel', 'BinLocations::cancelShipStationCheck');
     $routes->get('inventory/import-status', 'BinLocations::importStatus');
     $routes->get('inventory/qty-sync-status', 'BinLocations::qtySyncStatus');
+    $routes->get('inventory/shipstation-check-status', 'BinLocations::shipStationCheckStatus');
     $routes->get('logs', 'Logs::index');
     $routes->post('logs/cancel-job', 'Logs::cancelJob');
     $routes->get('profile', 'Profile::index');

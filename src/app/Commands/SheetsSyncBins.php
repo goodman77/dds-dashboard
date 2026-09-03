@@ -19,10 +19,12 @@ class SheetsSyncBins extends BaseCommand
         $result = service('binLocationSync')->syncFromGoogleSheet();
 
         CLI::write(sprintf(
-            'Sheets: %d | Scanned: %d | Imported: %d | Already in DB: %d | Not in Net32: %d',
+            'Sheets: %d | Scanned: %d | Added: %d | Updated: %d | Removed: %d | Unchanged: %d | Not in Net32: %d',
             $result['sheets'],
             $result['scanned'] ?? 0,
             $result['imported'],
+            $result['updated'] ?? 0,
+            $result['removed'] ?? 0,
             $result['skipped'] ?? 0,
             $result['ignored'] ?? 0,
         ), 'green');

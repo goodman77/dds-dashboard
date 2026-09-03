@@ -6,9 +6,9 @@ namespace App\Models;
 
 use CodeIgniter\Model;
 
-class InventoryImportJobModel extends Model
+class InventoryShipStationCheckJobModel extends Model
 {
-    protected $table            = 'inventory_import_jobs';
+    protected $table            = 'inventory_shipstation_check_jobs';
     protected $primaryKey       = 'id';
     protected $useAutoIncrement = true;
     protected $returnType       = 'array';
@@ -19,7 +19,6 @@ class InventoryImportJobModel extends Model
         'activity_log_id',
         'status',
         'sheet_name',
-        'import_mode',
         'progress_message',
         'result',
         'errors',

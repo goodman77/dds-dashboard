@@ -39,6 +39,26 @@ class GoogleSheetsClient
     }
 
     /**
+     * Sheet tabs in natural ascending order (1, 2, 3 …) for full-spreadsheet processing.
+     *
+     * @return list<string>
+     */
+    public function listSheetNamesAscending(): array
+    {
+        if ($this->config->apiKey !== '') {
+            $names = $this->listSheetNamesViaApi();
+
+            if ($names !== []) {
+                $this->persistCachedSheetNames($names);
+
+                return self::sortNamesAscending($names);
+            }
+        }
+
+        return self::sortNamesAscending($this->mergedSheetNames());
+    }
+
+    /**
      * Sheet tabs for filters and form dropdowns (configured + cached + API when available).
      *
      * @return list<string>

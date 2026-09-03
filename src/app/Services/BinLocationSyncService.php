@@ -7,7 +7,7 @@ namespace App\Services;
 class BinLocationSyncService
 {
     public function __construct(
-        private readonly InventoryImportService $import,
+        private readonly InventoryReconcileFromSheetsService $reconcile,
     ) {
     }
 
@@ -25,15 +25,15 @@ class BinLocationSyncService
      */
     public function syncFromGoogleSheet(): array
     {
-        $result = $this->import->importFromGoogleSheets();
+        $result = $this->reconcile->reconcileFromGoogleSheets();
 
         return [
-            'imported' => $result['imported'],
-            'updated'  => 0,
-            'removed'  => 0,
+            'imported' => $result['added'],
+            'updated'  => $result['updated'],
+            'removed'  => $result['removed'],
             'sheets'   => $result['sheets'],
             'scanned'  => $result['scanned'],
-            'skipped'  => $result['skipped'],
+            'skipped'  => $result['unchanged'],
             'ignored'  => $result['ignored'],
             'errors'   => $result['errors'],
         ];

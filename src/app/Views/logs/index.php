@@ -107,12 +107,16 @@
                                     $showCancelControl = $canCancel || $cancelRequested;
                                     $cancelLabel = match ($entry['action'] ?? '') {
                                         'inventory_import' => 'Cancel Import',
+                                        'inventory_reconcile' => 'Cancel Reconcile',
                                         'inventory_qty_sync' => 'Cancel Sync',
+                                        'inventory_shipstation_check' => 'Cancel Check',
                                         default            => 'Cancel',
                                     };
                                     $forceStopLabel = match ($entry['action'] ?? '') {
                                         'inventory_import' => 'Force Stop Import',
+                                        'inventory_reconcile' => 'Force Stop Reconcile',
                                         'inventory_qty_sync' => 'Force Stop Sync',
+                                        'inventory_shipstation_check' => 'Force Stop Check',
                                         default            => 'Force Stop',
                                     };
                                     ?>
@@ -184,8 +188,16 @@
             return 'Cancel this inventory import? SKUs already imported will stay in the database.';
         }
 
+        if (action === 'inventory_reconcile') {
+            return 'Cancel this sheet reconcile? Changes already applied (including removals) will stay in the database.';
+        }
+
         if (action === 'inventory_qty_sync') {
             return 'Cancel this Net32 quantity sync? Quantities already updated will stay as they are.';
+        }
+
+        if (action === 'inventory_shipstation_check') {
+            return 'Cancel this ShipStation location check? Locations already checked will stay as they are.';
         }
 
         return 'Cancel this job?';

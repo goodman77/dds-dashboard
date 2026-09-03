@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Models\InventoryModel;
+use App\Services\InventoryImportJobService;
+use App\Services\InventoryShipStationCheckService;
 use CodeIgniter\HTTP\RedirectResponse;
 use CodeIgniter\HTTP\ResponseInterface;
 
@@ -28,6 +30,7 @@ class BinLocations extends BaseController
         $sheetName    = trim((string) $this->request->getGet('sheet'));
         $net32Filter  = trim((string) $this->request->getGet('net32'));
         $quantityFilter = trim((string) $this->request->getGet('qty'));
+        $shipStationFilter = trim((string) $this->request->getGet('shipstation'));
         $perPage      = $this->resolvePerPage();
         $group        = 'bins';
         $sheetNames   = $this->resolveSheetNameOptions();
@@ -35,6 +38,8 @@ class BinLocations extends BaseController
         $importJobId  = $importJobId > 0 ? $importJobId : null;
         $qtySyncJobId = (int) $this->request->getGet('qty_sync_job');
         $qtySyncJobId = $qtySyncJobId > 0 ? $qtySyncJobId : null;
+        $shipStationCheckJobId = (int) $this->request->getGet('shipstation_check_job');
+        $shipStationCheckJobId = $shipStationCheckJobId > 0 ? $shipStationCheckJobId : null;
         $results      = $this->bins->paginateSearch(
             $search !== '' ? $search : null,
             $sheetName !== '' ? $sheetName : null,
@@ -42,9 +47,10 @@ class BinLocations extends BaseController
             $group,
             $this->normalizeNet32Filter($net32Filter),
             $this->normalizeQuantityFilter($quantityFilter),
+            $this->normalizeShipStationFilter($shipStationFilter),
         );
 
-        $this->bins->pager->only(['q', 'sheet', 'net32', 'qty', 'per_page']);
+        $this->bins->pager->only(['q', 'sheet', 'net32', 'qty', 'shipstation', 'per_page']);
 
         return view('bin_locations/index', [
             'title'          => 'Inventory',
@@ -54,11 +60,13 @@ class BinLocations extends BaseController
             'sheetFilter'    => $sheetName,
             'net32Filter'    => $net32Filter,
             'quantityFilter' => $quantityFilter,
+            'shipStationFilter' => $shipStationFilter,
             'sheetNames'     => $sheetNames,
             'perPage'        => $perPage,
             'perPageOptions' => self::PER_PAGE_OPTIONS,
             'defaultPerPage' => self::DEFAULT_PER_PAGE,
             'lastNet32QtySyncAt' => $this->bins->getLastNet32CheckedAt(),
+            'lastShipStationCheckAt' => $this->bins->getLastShipStationCheckedAt(),
             'spreadsheetUrl' => 'https://docs.google.com/spreadsheets/d/' . config('GoogleSheets')->spreadsheetId,
             'pager'          => $this->bins->pager,
             'pagerGroup'     => $group,
@@ -67,6 +75,8 @@ class BinLocations extends BaseController
             'importJobId'     => $importJobId,
             'qtySyncJobStatus' => service('inventoryQtySyncJob')->getStatus($qtySyncJobId),
             'qtySyncJobId'     => $qtySyncJobId,
+            'shipStationCheckJobStatus' => service('inventoryShipStationCheckJob')->getStatus($shipStationCheckJobId),
+            'shipStationCheckJobId'     => $shipStationCheckJobId,
             'flashSuccess'   => session()->getFlashdata('success'),
             'flashError'     => session()->getFlashdata('error'),
         ]);
@@ -96,6 +106,24 @@ class BinLocations extends BaseController
             $lastChecked = $this->bins->getLastNet32CheckedAt();
             $status['last_net32_qty_sync_at'] = $lastChecked;
             $status['last_net32_qty_sync_at_display'] = $lastChecked !== null
+                ? format_log_datetime($lastChecked)
+                : null;
+        }
+
+        return $this->response->setJSON($status);
+    }
+
+    public function shipStationCheckStatus(): ResponseInterface
+    {
+        $jobId = $this->request->getGet('job_id');
+
+        $status = service('inventoryShipStationCheckJob')->getStatus($jobId !== null ? (int) $jobId : null)
+            ?? ['status' => 'none'];
+
+        if (is_array($status)) {
+            $lastChecked = $this->bins->getLastShipStationCheckedAt();
+            $status['last_shipstation_check_at'] = $lastChecked;
+            $status['last_shipstation_check_at_display'] = $lastChecked !== null
                 ? format_log_datetime($lastChecked)
                 : null;
         }
@@ -134,6 +162,27 @@ class BinLocations extends BaseController
 
         if ($result['ok']) {
             service('inventoryQtySyncJob')->reconcileStuckJobs();
+        }
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
+    public function cancelShipStationCheck(): ResponseInterface
+    {
+        $jobId = (int) $this->request->getPost('job_id');
+
+        if ($jobId <= 0) {
+            return $this->response
+                ->setStatusCode(422)
+                ->setJSON(['ok' => false, 'message' => 'ShipStation check job ID is required.']);
+        }
+
+        $result = service('inventoryShipStationCheckJob')->requestCancel($jobId);
+
+        if ($result['ok']) {
+            service('inventoryShipStationCheckJob')->reconcileStuckJobs();
         }
 
         return $this->response
@@ -201,20 +250,90 @@ class BinLocations extends BaseController
             ->setJSON($result);
     }
 
+    public function checkShipStationLocation(int $id): ResponseInterface
+    {
+        $result = service('shipStationLocationCheck')->checkRow($id);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
+    public function syncShipStationLocation(int $id): ResponseInterface
+    {
+        // Same sync logic used by the sheet popup background job (ShipStationLocationSyncService::syncManyRows).
+        $result = service('shipStationLocationSync')->syncRow($id);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
+    public function destroy(int $id): ResponseInterface
+    {
+        $location = $this->bins->find($id);
+
+        if ($location === null) {
+            return $this->response->setStatusCode(404)->setJSON([
+                'ok'      => false,
+                'message' => 'Inventory row not found.',
+            ]);
+        }
+
+        $deleteCheck = $this->bins->canManuallyDeleteRow($location);
+
+        if (! $deleteCheck['ok']) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'ok'      => false,
+                'message' => $deleteCheck['message'] ?? 'This inventory row cannot be deleted.',
+            ]);
+        }
+
+        if (! $this->bins->delete($id)) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'ok'      => false,
+                'message' => 'Could not delete this inventory row.',
+            ]);
+        }
+
+        service('activityLog')->logInventoryDelete(
+            $location,
+            auth()->loggedIn() ? (int) auth()->id() : null,
+        );
+
+        $sku = trim((string) ($location['sku'] ?? ''));
+
+        return $this->response->setJSON([
+            'ok'      => true,
+            'message' => $sku !== ''
+                ? sprintf('Removed SKU %s from inventory. Google Sheet unchanged.', $sku)
+                : 'Removed inventory row. Google Sheet unchanged.',
+        ]);
+    }
+
     public function sync(): RedirectResponse
     {
         $sheetName = trim((string) $this->request->getPost('sheet_name'));
+        $mode      = trim((string) $this->request->getPost('import_mode'));
+        $isReconcile = $mode !== InventoryImportJobService::MODE_IMPORT;
+        $withNet32 = $isReconcile && $this->request->getPost('with_net32') !== null;
+        $withShipStation = $isReconcile && $this->request->getPost('with_shipstation') !== null;
 
         if ($sheetName === '') {
             return redirect()->to($this->inventoryUrl())->with(
                 'error',
-                'Choose a sheet tab to import.',
+                'Choose a sheet tab or all sheets to sync.',
             );
         }
 
         $dispatch = service('inventoryImportJob')->dispatch(
             $sheetName,
             auth()->loggedIn() ? (int) auth()->id() : null,
+            $isReconcile
+                ? InventoryImportJobService::MODE_RECONCILE
+                : InventoryImportJobService::MODE_IMPORT,
+            $withNet32,
+            $withShipStation,
         );
 
         $redirectQuery = [];
@@ -257,6 +376,34 @@ class BinLocations extends BaseController
         );
     }
 
+    public function shipStationCheck(): RedirectResponse
+    {
+        $sheetName = trim((string) $this->request->getPost('sheet_name'));
+
+        if ($sheetName === '') {
+            return redirect()->to($this->inventoryUrl())->with(
+                'error',
+                'Choose a sheet tab or all sheets for ShipStation location sync.',
+            );
+        }
+
+        $userId = auth()->loggedIn() ? (int) auth()->id() : null;
+        $dispatch = $sheetName === InventoryShipStationCheckService::ALL_SHEETS
+            ? service('inventoryShipStationCheckJob')->enqueueForAll($userId)
+            : service('inventoryShipStationCheckJob')->enqueueForSheet($sheetName, $userId);
+
+        $redirectQuery = [];
+
+        if ($dispatch['queued'] && isset($dispatch['job_id'])) {
+            $redirectQuery['shipstation_check_job'] = (int) $dispatch['job_id'];
+        }
+
+        return redirect()->to($this->inventoryUrl($redirectQuery))->with(
+            $dispatch['queued'] ? 'success' : 'error',
+            $dispatch['message'],
+        );
+    }
+
     /**
      * @return list<string>
      */
@@ -281,10 +428,12 @@ class BinLocations extends BaseController
                 'sheet'       => trim((string) $this->request->getGet('sheet')),
                 'net32'       => trim((string) $this->request->getGet('net32')),
                 'qty'         => trim((string) $this->request->getGet('qty')),
+                'shipstation' => trim((string) $this->request->getGet('shipstation')),
                 'per_page'    => (int) $this->request->getGet('per_page'),
                 'page'        => (int) $this->request->getGet('page'),
                 'import_job'   => (int) $this->request->getGet('import_job'),
                 'qty_sync_job' => (int) $this->request->getGet('qty_sync_job'),
+                'shipstation_check_job' => (int) $this->request->getGet('shipstation_check_job'),
             ], static fn ($value): bool => $value !== '' && $value !== 0);
         }
 
@@ -306,6 +455,11 @@ class BinLocations extends BaseController
     private function normalizeQuantityFilter(string $filter): ?string
     {
         return $filter === 'zero' ? 'zero' : null;
+    }
+
+    private function normalizeShipStationFilter(string $filter): ?string
+    {
+        return in_array($filter, ['missing', 'ok', 'mismatch', 'wrong_warehouse'], true) ? $filter : null;
     }
 
     /**

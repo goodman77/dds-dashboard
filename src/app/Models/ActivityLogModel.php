@@ -115,9 +115,12 @@ class ActivityLogModel extends Model
     public function actionLabels(): array
     {
         return [
-            'inventory_import'   => 'Inventory Import',
-            'inventory_qty_sync' => 'Net32 Qty Sync',
-            'edit_qty'           => 'Edit',
+            'inventory_import'            => 'Inventory Import',
+            'inventory_reconcile'         => 'Sheet Reconcile',
+            'inventory_qty_sync'          => 'Net32 Qty Sync',
+            'inventory_shipstation_check' => 'ShipStation Location Sync',
+            'edit_qty'                    => 'Edit',
+            'inventory_delete'            => 'Delete',
         ];
     }
 }

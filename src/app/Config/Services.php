@@ -46,6 +46,33 @@ class Services extends BaseService
         );
     }
 
+    public static function inventoryReconcile(bool $getShared = true): \App\Services\InventoryReconcileFromSheetsService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryReconcile');
+        }
+
+        return new \App\Services\InventoryReconcileFromSheetsService(
+            static::googleSheets(false),
+            model(\App\Models\InventoryModel::class),
+            static::net32(false)->products(),
+            new \App\Services\InventorySheetParser(),
+        );
+    }
+
+    public static function inventoryFullSync(bool $getShared = true): \App\Services\InventoryFullSyncService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryFullSync');
+        }
+
+        return new \App\Services\InventoryFullSyncService(
+            static::inventoryReconcile(false),
+            static::inventoryQtySync(false),
+            static::inventoryShipStationCheck(false),
+        );
+    }
+
     public static function binLocationSync(bool $getShared = true): \App\Services\BinLocationSyncService
     {
         if ($getShared) {
@@ -53,7 +80,7 @@ class Services extends BaseService
         }
 
         return new \App\Services\BinLocationSyncService(
-            static::inventoryImport(false),
+            static::inventoryReconcile(false),
         );
     }
 
@@ -66,6 +93,45 @@ class Services extends BaseService
         return new \App\Services\InventoryImportJobService(
             model(\App\Models\InventoryImportJobModel::class),
             static::inventoryImport(false),
+        );
+    }
+
+    public static function shipStation(bool $getShared = true): \App\Libraries\ShipStation\ShipStation
+    {
+        if ($getShared) {
+            return static::getSharedInstance('shipStation');
+        }
+
+        $config = config('ShipStation');
+
+        return new \App\Libraries\ShipStation\ShipStation(
+            new \App\Libraries\ShipStation\ShipStationClient($config),
+            $config,
+        );
+    }
+
+    public static function shipStationLocationCheck(bool $getShared = true): \App\Services\ShipStationLocationCheckService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('shipStationLocationCheck');
+        }
+
+        return new \App\Services\ShipStationLocationCheckService(
+            model(\App\Models\InventoryModel::class),
+            static::shipStation(false)->inventory(),
+        );
+    }
+
+    public static function shipStationLocationSync(bool $getShared = true): \App\Services\ShipStationLocationSyncService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('shipStationLocationSync');
+        }
+
+        return new \App\Services\ShipStationLocationSyncService(
+            model(\App\Models\InventoryModel::class),
+            static::shipStation(false)->inventory(),
+            static::shipStationLocationCheck(false),
         );
     }
 
@@ -90,6 +156,30 @@ class Services extends BaseService
         return new \App\Services\InventoryQuantitySyncService(
             model(\App\Models\InventoryModel::class),
             static::inventoryQuantityCheck(false),
+        );
+    }
+
+    public static function inventoryShipStationCheck(bool $getShared = true): \App\Services\InventoryShipStationCheckService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryShipStationCheck');
+        }
+
+        return new \App\Services\InventoryShipStationCheckService(
+            model(\App\Models\InventoryModel::class),
+            static::shipStationLocationSync(false),
+        );
+    }
+
+    public static function inventoryShipStationCheckJob(bool $getShared = true): \App\Services\InventoryShipStationCheckJobService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('inventoryShipStationCheckJob');
+        }
+
+        return new \App\Services\InventoryShipStationCheckJobService(
+            model(\App\Models\InventoryShipStationCheckJobModel::class),
+            static::inventoryShipStationCheck(false),
         );
     }
 

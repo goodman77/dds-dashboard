@@ -38,6 +38,7 @@ class InventoryQuantitySyncService
         bool $verbose = true,
         ?int $jobId = null,
         ?int $logId = null,
+        ?int $pipelineImportJobId = null,
     ): array {
         $sheetName = trim($sheetName);
         $rows      = $this->inventory->findBySheetName($sheetName);
@@ -49,6 +50,7 @@ class InventoryQuantitySyncService
             $verbose,
             $jobId,
             $logId,
+            $pipelineImportJobId,
         );
     }
 
@@ -70,6 +72,7 @@ class InventoryQuantitySyncService
         bool $verbose = true,
         ?int $jobId = null,
         ?int $logId = null,
+        ?int $pipelineImportJobId = null,
     ): array {
         $rows = $this->inventory->findAllForQuantitySync();
 
@@ -80,6 +83,7 @@ class InventoryQuantitySyncService
             $verbose,
             $jobId,
             $logId,
+            $pipelineImportJobId,
         );
     }
 
@@ -103,22 +107,36 @@ class InventoryQuantitySyncService
         bool $verbose = true,
         ?int $jobId = null,
         ?int $logId = null,
+        ?int $pipelineImportJobId = null,
     ): array {
         $delaySeconds ??= (float) config('Net32')->requestDelaySeconds;
         $this->showProgress = $verbose && is_cli();
-        $scopeLabel = $this->formatScopeLabel($scope);
-        $total     = count($rows);
-        $processed = 0;
-        $updated   = 0;
-        $unchanged = 0;
-        $missing   = 0;
-        $errors    = [];
+        $scopeLabel     = $this->formatScopeLabel($scope);
+        $total          = count($rows);
+        $processed      = 0;
+        $updated        = 0;
+        $unchanged      = 0;
+        $missing        = 0;
+        $errors         = [];
 
         if ($this->showProgress) {
-            CLI::write(sprintf('%s: checking %d SKU row(s) against Net32...', $scopeLabel, $total), 'cyan');
+            CLI::write(sprintf(
+                '%s: checking %d SKU row(s) against Net32 (%s delay)...',
+                $scopeLabel,
+                $total,
+                $this->formatDelayLabel($delaySeconds),
+            ), 'cyan');
         }
 
-        if ($jobId !== null) {
+        if ($pipelineImportJobId !== null) {
+            service('inventoryImportJob')->updatePipelineProgress(
+                $pipelineImportJobId,
+                'net32',
+                0,
+                $total,
+                sprintf('Checking %d SKU(s) (%s)...', $total, $scopeLabel),
+            );
+        } elseif ($jobId !== null) {
             service('inventoryQtySyncJob')->updateProgress(
                 $jobId,
                 0,
@@ -130,7 +148,7 @@ class InventoryQuantitySyncService
         }
 
         foreach ($rows as $row) {
-            if ($jobId !== null && service('inventoryQtySyncJob')->isCancelRequested($jobId)) {
+            if ($this->isSyncCancelled($jobId, $pipelineImportJobId)) {
                 return array_merge([
                     'sheet_name' => $scope,
                     'total'      => $total,
@@ -204,14 +222,36 @@ class InventoryQuantitySyncService
                 ), 'red');
             }
 
-            if ($jobId !== null) {
+            if ($pipelineImportJobId !== null) {
+                service('inventoryImportJob')->updatePipelineProgress(
+                    $pipelineImportJobId,
+                    'net32',
+                    $processed,
+                    $total,
+                    sprintf(
+                        'Checked %d of %d (%s) — updated %d, unchanged %d, not in Net32 %d.',
+                        $processed,
+                        $total,
+                        $scopeLabel,
+                        $updated,
+                        $unchanged,
+                        $missing,
+                    ),
+                    [
+                        'net32_processed' => $processed,
+                        'net32_updated'   => $updated,
+                        'net32_unchanged' => $unchanged,
+                        'net32_missing'   => $missing,
+                    ],
+                );
+            } elseif ($jobId !== null) {
                 service('inventoryQtySyncJob')->updateProgress(
                     $jobId,
                     $processed,
                     $total,
                     $scope,
                     sprintf(
-                        'Checked %d of %d SKU(s) (%s) — updated %d, unchanged %d, not in Net32 %d.',
+                        'Checked %d of %d (%s) — updated %d, unchanged %d, not in Net32 %d.',
                         $processed,
                         $total,
                         $scopeLabel,
@@ -244,9 +284,23 @@ class InventoryQuantitySyncService
         ];
     }
 
+    private function isSyncCancelled(?int $jobId, ?int $pipelineImportJobId): bool
+    {
+        if ($pipelineImportJobId !== null && service('inventoryImportJob')->isCancelRequested($pipelineImportJobId)) {
+            return true;
+        }
+
+        return $jobId !== null && service('inventoryQtySyncJob')->isCancelRequested($jobId);
+    }
+
     private function formatScopeLabel(string $scope): string
     {
         return $scope === self::ALL_SHEETS ? 'All sheets' : 'Sheet "' . $scope . '"';
+    }
+
+    private function formatDelayLabel(float $delaySeconds): string
+    {
+        return rtrim(rtrim(number_format($delaySeconds, 1, '.', ''), '0'), '.') . 's';
     }
 
     private function progressLine(string $message, string $color = 'white'): void

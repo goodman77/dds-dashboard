@@ -14,6 +14,9 @@
                 <?php if (($quantityFilter ?? '') !== '') : ?>
                     <input type="hidden" name="qty" value="<?= esc($quantityFilter) ?>">
                 <?php endif ?>
+                <?php if (($shipStationFilter ?? '') !== '') : ?>
+                    <input type="hidden" name="shipstation" value="<?= esc($shipStationFilter) ?>">
+                <?php endif ?>
                 <label for="per_page_top" class="form-label mb-0 text-muted small text-nowrap">Show</label>
                 <select name="per_page" id="per_page_top" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
                     <?php foreach ($perPageOptions as $option) : ?>

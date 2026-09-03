@@ -1,0 +1,650 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Libraries\GoogleSheets\Exceptions\GoogleSheetsException;
+use App\Libraries\GoogleSheets\GoogleSheetsClient;
+use App\Libraries\Net32\Exceptions\Net32ApiException;
+use App\Libraries\Net32\Resources\ProductsResource;
+use App\Models\InventoryModel;
+use CodeIgniter\CLI\CLI;
+
+class InventoryReconcileFromSheetsService
+{
+    public const ALL_SHEETS = '*';
+
+    private bool $showProgress = false;
+
+    public function __construct(
+        private readonly GoogleSheetsClient $sheets,
+        private readonly InventoryModel $inventory,
+        private readonly ProductsResource $products,
+        private readonly InventorySheetParser $parser,
+    ) {
+    }
+
+    /**
+     * @return array{
+     *     sheet_name: string|null,
+     *     sheets: int,
+     *     scanned: int,
+     *     added: int,
+     *     updated: int,
+     *     removed: int,
+     *     unchanged: int,
+     *     ignored: int,
+     *     errors: list<string>,
+     *     discovered_sheets?: list<string>,
+     *     sheet_names?: list<string>
+     * }
+     */
+    public function reconcileFromGoogleSheets(
+        ?string $onlySheet = null,
+        ?float $delaySeconds = null,
+        bool $dryRun = false,
+        bool $verbose = true,
+        bool $logActivity = true,
+        ?int $jobId = null,
+    ): array {
+        $delaySeconds ??= (float) config('Net32')->requestDelaySeconds;
+        $this->showProgress = $verbose && is_cli();
+        $syncedAt           = date('Y-m-d H:i:s');
+
+        $added      = 0;
+        $updated    = 0;
+        $removed    = 0;
+        $unchanged  = 0;
+        $ignored    = 0;
+        $errors     = [];
+        $sheetCount = 0;
+        $scanned    = 0;
+        $discoveredSheets = [];
+
+        try {
+            $discoveredSheets = $this->sheets->refreshSheetNamesFromGoogle();
+            $sheetNames       = $this->resolveSheetNames($onlySheet);
+        } catch (GoogleSheetsException $exception) {
+            return $this->finish([
+                'sheet_name' => $onlySheet,
+                'sheets'     => 0,
+                'scanned'    => 0,
+                'added'      => 0,
+                'updated'    => 0,
+                'removed'    => 0,
+                'unchanged'  => 0,
+                'ignored'    => 0,
+                'errors'     => [$exception->getMessage()],
+            ], $dryRun, $logActivity);
+        }
+
+        if ($sheetNames === []) {
+            return $this->finish([
+                'sheet_name' => $onlySheet,
+                'sheets'     => 0,
+                'scanned'    => 0,
+                'added'      => 0,
+                'updated'    => 0,
+                'removed'    => 0,
+                'unchanged'  => 0,
+                'ignored'    => 0,
+                'errors'     => ['No worksheet tabs configured. Set googleSheets.sheetNames or googleSheets.apiKey in .env.'],
+            ], $dryRun, $logActivity);
+        }
+
+        if ($this->showProgress) {
+            $this->progressLine('Reading Google Sheets and building reconcile plan...', 'cyan');
+        }
+
+        /** @var array<string, array<string, array<string, mixed>>> $entriesBySheet sku_key => entry, keyed by sheet */
+        $entriesBySheet = [];
+        $globalSkuOwner = [];
+
+        foreach ($sheetNames as $sheetName) {
+            $sheetName = (string) $sheetName;
+
+            try {
+                $rows    = $this->sheets->fetchSheetRows($sheetName);
+                $entries = $this->parser->parseSkuEntries($sheetName, $rows);
+                $this->sheets->rememberSheetName($sheetName);
+                $sheetCount++;
+
+                $sheetMap = [];
+
+                foreach ($entries as $entry) {
+                    $skuKey = strtoupper($entry['sku']);
+
+                    if (isset($sheetMap[$skuKey])) {
+                        $errors[] = sprintf(
+                            'Sheet "%s": SKU %s appears more than once (rows %d and %d).',
+                            $sheetName,
+                            $entry['sku'],
+                            (int) $sheetMap[$skuKey]['sheet_row'],
+                            (int) $entry['sheet_row'],
+                        );
+
+                        continue;
+                    }
+
+                    if (isset($globalSkuOwner[$skuKey]) && $globalSkuOwner[$skuKey] !== $sheetName) {
+                        $errors[] = sprintf(
+                            'SKU %s appears on sheet "%s" and "%s". Reconcile one sheet at a time or fix the sheet.',
+                            $entry['sku'],
+                            $globalSkuOwner[$skuKey],
+                            $sheetName,
+                        );
+
+                        continue;
+                    }
+
+                    $sheetMap[$skuKey]     = $entry;
+                    $globalSkuOwner[$skuKey] = $sheetName;
+                }
+
+                $entriesBySheet[(string) $sheetName] = $sheetMap;
+            } catch (GoogleSheetsException $exception) {
+                $errors[] = sprintf('Sheet "%s": %s', $sheetName, $exception->getMessage());
+            }
+        }
+
+        $grandTotal = array_sum(array_map('count', $entriesBySheet));
+
+        if ($this->showProgress) {
+            $this->progressLine(sprintf(
+                'Found %d unique SKU(s) across %d sheet tab(s).',
+                $grandTotal,
+                count($entriesBySheet),
+            ), 'cyan');
+        }
+
+        if ($jobId !== null) {
+            service('inventoryImportJob')->updateProgress(
+                $jobId,
+                0,
+                max($grandTotal, 1),
+                null,
+                sprintf('Reconciling %d SKU(s) across %d sheet tab(s)...', $grandTotal, count($entriesBySheet)),
+                [
+                    'added'     => 0,
+                    'updated'   => 0,
+                    'removed'   => 0,
+                    'unchanged' => 0,
+                    'ignored'   => 0,
+                ],
+            );
+        }
+
+        foreach ($entriesBySheet as $sheetName => $sheetEntries) {
+            $sheetName = (string) $sheetName;
+
+            foreach ($sheetEntries as $entry) {
+                $cancelled = $this->buildCancelledReconcileResult(
+                    $jobId,
+                    $onlySheet,
+                    $sheetCount,
+                    $scanned,
+                    $added,
+                    $updated,
+                    $removed,
+                    $unchanged,
+                    $ignored,
+                    $errors,
+                    $discoveredSheets ?? [],
+                );
+
+                if ($cancelled !== null) {
+                    return $this->finish($cancelled, $dryRun, $logActivity);
+                }
+
+                $scanned++;
+                $sku    = $entry['sku'];
+                $prefix = $this->formatProgressPrefix($scanned, $grandTotal, $entry);
+                $existing = $this->inventory->findBySku($sku);
+
+                if ($existing === null) {
+                    $addedResult = $this->addEntryFromSheet($entry, $syncedAt, $delaySeconds, $dryRun, $prefix, $errors);
+
+                    if ($addedResult === 'added') {
+                        $added++;
+                    } elseif ($addedResult === 'ignored') {
+                        $ignored++;
+                    }
+
+                    $this->tickReconcileProgress(
+                        $jobId,
+                        $scanned,
+                        $grandTotal,
+                        $entry,
+                        $added,
+                        $updated,
+                        $removed,
+                        $unchanged,
+                        $ignored,
+                    );
+
+                    continue;
+                }
+
+                $changes = $this->detectLocationChanges($existing, $entry);
+
+                if ($changes === []) {
+                    $unchanged++;
+                    $this->progressLine($prefix . 'unchanged.', 'light_gray');
+                    $this->tickReconcileProgress(
+                        $jobId,
+                        $scanned,
+                        $grandTotal,
+                        $entry,
+                        $added,
+                        $updated,
+                        $removed,
+                        $unchanged,
+                        $ignored,
+                    );
+
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $updated++;
+                    $this->progressLine($prefix . 'would update location.', 'yellow');
+                    $this->tickReconcileProgress(
+                        $jobId,
+                        $scanned,
+                        $grandTotal,
+                        $entry,
+                        $added,
+                        $updated,
+                        $removed,
+                        $unchanged,
+                        $ignored,
+                    );
+
+                    continue;
+                }
+
+                $record = array_merge($existing, [
+                    'sheet_name'  => $entry['sheet_name'],
+                    'rack'        => $entry['rack'],
+                    'bin'         => $entry['bin'],
+                    'is_main_sku' => ! empty($entry['is_main_sku']) ? 1 : 0,
+                ]);
+
+                if ($this->inventory->update((int) $existing['id'], [
+                    'sheet_name'  => $record['sheet_name'],
+                    'rack'        => $record['rack'],
+                    'bin'         => $record['bin'],
+                    'is_main_sku' => $record['is_main_sku'],
+                ])) {
+                    $updated++;
+                    service('activityLog')->logInventoryEdit(
+                        $existing,
+                        $record,
+                        (int) $existing['id'],
+                        $changes,
+                    );
+                    $this->progressLine($prefix . 'updated location.', 'green');
+                } else {
+                    $errors[] = sprintf('Could not update SKU %s.', $sku);
+                    $this->progressLine($prefix . 'failed to update.', 'red');
+                }
+
+                $this->tickReconcileProgress(
+                    $jobId,
+                    $scanned,
+                    $grandTotal,
+                    $entry,
+                    $added,
+                    $updated,
+                    $removed,
+                    $unchanged,
+                    $ignored,
+                );
+            }
+        }
+
+        foreach ($entriesBySheet as $sheetName => $sheetEntries) {
+            $cancelled = $this->buildCancelledReconcileResult(
+                $jobId,
+                $onlySheet,
+                $sheetCount,
+                $scanned,
+                $added,
+                $updated,
+                $removed,
+                $unchanged,
+                $ignored,
+                $errors,
+                $discoveredSheets ?? [],
+            );
+
+            if ($cancelled !== null) {
+                return $this->finish($cancelled, $dryRun, $logActivity);
+            }
+
+            $sheetName = (string) $sheetName;
+
+            if ($jobId !== null) {
+                service('inventoryImportJob')->updateProgress(
+                    $jobId,
+                    $scanned,
+                    max($grandTotal, 1),
+                    $sheetName,
+                    sprintf('Removing SKUs not on sheet "%s"...', $sheetName),
+                    [
+                        'added'     => $added,
+                        'updated'   => $updated,
+                        'removed'   => $removed,
+                        'unchanged' => $unchanged,
+                        'ignored'   => $ignored,
+                    ],
+                );
+            }
+
+            $dbRows = $this->inventory->findBySheetName($sheetName);
+
+            foreach ($dbRows as $row) {
+                $skuKey = strtoupper(trim((string) ($row['sku'] ?? '')));
+
+                if ($skuKey === '' || isset($sheetEntries[$skuKey])) {
+                    continue;
+                }
+
+                $sku    = (string) $row['sku'];
+                $rowId  = (int) $row['id'];
+                $prefix = sprintf(
+                    'Sheet "%s" | Rack %s / Bin %s | SKU %s → ',
+                    $sheetName,
+                    $row['rack'] ?? '',
+                    $row['bin'] ?? '',
+                    $sku,
+                );
+
+                if ($dryRun) {
+                    $removed++;
+                    $this->progressLine($prefix . 'would remove (not on sheet).', 'yellow');
+
+                    continue;
+                }
+
+                if ($this->inventory->delete($rowId)) {
+                    $removed++;
+                    $this->progressLine($prefix . 'removed (not on sheet).', 'yellow');
+                } else {
+                    $errors[] = sprintf('Could not remove SKU %s (id %d).', $sku, $rowId);
+                    $this->progressLine($prefix . 'failed to remove.', 'red');
+                }
+            }
+        }
+
+        return $this->finish([
+            'sheet_name'        => $onlySheet,
+            'sheets'            => $sheetCount,
+            'scanned'           => $scanned,
+            'added'             => $added,
+            'updated'           => $updated,
+            'removed'           => $removed,
+            'unchanged'         => $unchanged,
+            'ignored'           => $ignored,
+            'errors'            => $errors,
+            'discovered_sheets' => $discoveredSheets,
+            'sheet_names'       => $this->sheets->getSheetNameOptions(),
+        ], $dryRun, $logActivity);
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     *
+     * @return 'added'|'ignored'|'failed'
+     */
+    private function addEntryFromSheet(
+        array $entry,
+        string $syncedAt,
+        float $delaySeconds,
+        bool $dryRun,
+        string $prefix,
+        array &$errors,
+    ): string {
+        $sku = $entry['sku'];
+
+        $this->progressLine($prefix . 'checking Net32...', 'white');
+        $this->sleepBetweenRequests($delaySeconds);
+
+        try {
+            $offer = $this->products->findOfferByVpCode($sku);
+        } catch (Net32ApiException $exception) {
+            $message = sprintf('SKU %s: %s', $sku, $exception->getMessage());
+            $errors[] = $message;
+            $this->progressLine($prefix . 'error: ' . $exception->getMessage(), 'red');
+
+            return 'failed';
+        }
+
+        if ($offer === null) {
+            $this->progressLine($prefix . 'not in Net32 (skipped).', 'light_gray');
+
+            return 'ignored';
+        }
+
+        if ($dryRun) {
+            $this->progressLine(sprintf('%swould add (qty %d).', $prefix, $offer['quantity']), 'green');
+
+            return 'added';
+        }
+
+        $saved = $this->inventory->insertSkuRecord([
+            'sheet_name'       => $entry['sheet_name'],
+            'rack'             => $entry['rack'],
+            'bin'              => $entry['bin'],
+            'sku'              => $sku,
+            'is_main_sku'      => ! empty($entry['is_main_sku']) ? 1 : 0,
+            'name'             => $offer['name'],
+            'description'      => $offer['description'],
+            'quantity'         => $offer['quantity'],
+            'sku_net32_exists' => 1,
+            'net32_checked_at' => $syncedAt,
+            'synced_at'        => $syncedAt,
+        ]);
+
+        if ($saved) {
+            $this->progressLine(sprintf('%sadded (qty %d).', $prefix, $offer['quantity']), 'green');
+
+            return 'added';
+        }
+
+        $errors[] = sprintf('Could not save %s/%s/%s SKU %s.', $entry['sheet_name'], $entry['rack'], $entry['bin'], $sku);
+        $this->progressLine($prefix . 'failed to save to database.', 'red');
+
+        return 'failed';
+    }
+
+    /**
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $entry
+     *
+     * @return array<string, array{label: string, from: mixed, to: mixed}>
+     */
+    private function detectLocationChanges(array $existing, array $entry): array
+    {
+        $record = [
+            'sheet_name'  => $entry['sheet_name'],
+            'rack'        => $entry['rack'],
+            'bin'         => $entry['bin'],
+            'sku'         => $entry['sku'],
+            'is_main_sku' => ! empty($entry['is_main_sku']) ? 1 : 0,
+            'name'        => $existing['name'] ?? null,
+            'description' => $existing['description'] ?? null,
+            'quantity'    => $existing['quantity'] ?? 0,
+        ];
+
+        return service('activityLog')->detectInventoryChanges($existing, $record);
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function formatProgressPrefix(int $current, int $total, array $entry): string
+    {
+        $skuType = ! empty($entry['is_main_sku']) ? 'main' : 'alternate';
+
+        return sprintf(
+            '[%d/%d] Sheet "%s" row %d | Rack %s / Bin %s | SKU %s (%s) → ',
+            $current,
+            $total,
+            $entry['sheet_name'],
+            (int) ($entry['sheet_row'] ?? 0),
+            $entry['rack'],
+            $entry['bin'],
+            $entry['sku'],
+            $skuType,
+        );
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function resolveSheetNames(?string $onlySheet): array
+    {
+        if ($onlySheet !== null && $onlySheet !== '' && $onlySheet !== self::ALL_SHEETS) {
+            return [$onlySheet];
+        }
+
+        return $this->sheets->listSheetNamesAscending();
+    }
+
+    /**
+     * @param array{
+     *     sheet_name: string|null,
+     *     sheets: int,
+     *     scanned: int,
+     *     added: int,
+     *     updated: int,
+     *     removed: int,
+     *     unchanged: int,
+     *     ignored: int,
+     *     errors: list<string>
+     * } $result
+     *
+     * @return array{
+     *     sheet_name: string|null,
+     *     sheets: int,
+     *     scanned: int,
+     *     added: int,
+     *     updated: int,
+     *     removed: int,
+     *     unchanged: int,
+     *     ignored: int,
+     *     errors: list<string>
+     * }
+     */
+    private function finish(array $result, bool $dryRun, bool $logActivity): array
+    {
+        if (! $dryRun && $logActivity) {
+            service('activityLog')->logInventoryReconcile($result);
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function tickReconcileProgress(
+        ?int $jobId,
+        int $scanned,
+        int $grandTotal,
+        array $entry,
+        int $added,
+        int $updated,
+        int $removed,
+        int $unchanged,
+        int $ignored,
+    ): void {
+        if ($jobId === null) {
+            return;
+        }
+
+        service('inventoryImportJob')->updateProgress(
+            $jobId,
+            $scanned,
+            max($grandTotal, 1),
+            (string) $entry['sheet_name'],
+            sprintf(
+                'Reconciled %d of %d — added %d, updated %d, removed %d, unchanged %d, skipped (new, not in Net32) %d.',
+                $scanned,
+                $grandTotal,
+                $added,
+                $updated,
+                $removed,
+                $unchanged,
+                $ignored,
+            ),
+            [
+                'added'     => $added,
+                'updated'   => $updated,
+                'removed'   => $removed,
+                'unchanged' => $unchanged,
+                'ignored'   => $ignored,
+            ],
+        );
+    }
+
+    /**
+     * @param list<string> $errors
+     * @param list<string> $discoveredSheets
+     *
+     * @return array<string, mixed>|null
+     */
+    private function buildCancelledReconcileResult(
+        ?int $jobId,
+        ?string $onlySheet,
+        int $sheetCount,
+        int $scanned,
+        int $added,
+        int $updated,
+        int $removed,
+        int $unchanged,
+        int $ignored,
+        array $errors,
+        array $discoveredSheets,
+    ): ?array {
+        if ($jobId === null || ! service('inventoryImportJob')->isCancelRequested($jobId)) {
+            return null;
+        }
+
+        return [
+            'sheet_name'        => $onlySheet,
+            'sheets'            => $sheetCount,
+            'scanned'           => $scanned,
+            'added'             => $added,
+            'updated'           => $updated,
+            'removed'           => $removed,
+            'unchanged'         => $unchanged,
+            'ignored'           => $ignored,
+            'errors'            => $errors,
+            'discovered_sheets' => $discoveredSheets,
+            'sheet_names'       => $this->sheets->getSheetNameOptions(),
+            'cancelled'         => true,
+            'total'             => max($scanned, 0),
+        ];
+    }
+
+    private function progressLine(string $message, string $color = 'white'): void
+    {
+        if (! $this->showProgress) {
+            return;
+        }
+
+        CLI::write($message, $color);
+    }
+
+    private function sleepBetweenRequests(float $delaySeconds): void
+    {
+        if ($delaySeconds <= 0) {
+            return;
+        }
+
+        usleep((int) round($delaySeconds * 1_000_000));
+    }
+}

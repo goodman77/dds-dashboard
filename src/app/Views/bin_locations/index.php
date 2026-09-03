@@ -10,18 +10,83 @@
                 <p class="text-muted small mb-0">One row per SKU — rack, bin, and Net32 product details</p>
             </div>
             <div class="col-sm-6 text-sm-end mt-2 mt-sm-0">
-                <button type="button" class="btn btn-success btn-sm" id="inventory-add-btn">
-                    <i class="bi bi-plus-lg"></i> Add Main SKU
-                </button>
-                <a href="<?= esc($spreadsheetUrl) ?>" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener">
-                    <i class="bi bi-table"></i> Open Google Sheet
-                </a>
-                <button type="button" class="btn btn-primary btn-sm" id="sheets-sync-btn" data-bs-toggle="modal" data-bs-target="#import-sheets-modal">
-                    <i class="bi bi-arrow-repeat"></i> Import from Google Sheets
-                </button>
-                <button type="button" class="btn btn-warning btn-sm" id="qty-sync-btn" data-bs-toggle="modal" data-bs-target="#qty-sync-modal">
-                    <i class="bi bi-cloud-download"></i> Qty Sync
-                </button>
+                <div class="d-inline-flex flex-wrap justify-content-sm-end align-items-center gap-2">
+                    <button type="button" class="btn btn-success btn-sm" id="inventory-add-btn">
+                        <i class="bi bi-plus-lg"></i> Add Main SKU
+                    </button>
+
+                    <div class="btn-group">
+                        <button
+                            type="button"
+                            class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            id="google-sheets-menu-btn"
+                        >
+                            <i class="bi bi-table"></i> Google Sheets
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <li>
+                                <a
+                                    class="dropdown-item"
+                                    href="<?= esc($spreadsheetUrl) ?>"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <i class="bi bi-box-arrow-up-right me-2 text-muted"></i>Open spreadsheet
+                                </a>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <button
+                                    type="button"
+                                    class="dropdown-item"
+                                    id="sheets-sync-btn"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#import-sheets-modal"
+                                >
+                                    <i class="bi bi-arrow-repeat me-2 text-primary"></i>Sync from Google Sheets
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="btn-group">
+                        <button
+                            type="button"
+                            class="btn btn-primary btn-sm dropdown-toggle"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            id="sync-check-menu-btn"
+                        >
+                            <i class="bi bi-cloud-check"></i> Sync &amp; Check
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <li>
+                                <button
+                                    type="button"
+                                    class="dropdown-item"
+                                    id="qty-sync-btn"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#qty-sync-modal"
+                                >
+                                    <i class="bi bi-cloud-download me-2 text-warning"></i>Net32 Qty Sync
+                                </button>
+                            </li>
+                            <li>
+                                <button
+                                    type="button"
+                                    class="dropdown-item"
+                                    id="shipstation-check-btn"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#shipstation-check-modal"
+                                >
+                                    <i class="bi bi-geo-alt me-2 text-info"></i>ShipStation Location Sync
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -46,7 +111,7 @@
         <div id="import-status-panel" class="alert alert-info d-none">
             <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
                 <div class="d-flex align-items-center gap-2">
-                    <strong id="import-status-title">Inventory import running...</strong>
+                    <strong id="import-status-title">Google Sheets sync running...</strong>
                     <span id="import-status-badge" class="badge text-bg-info">running</span>
                 </div>
                 <button type="button" class="btn btn-outline-danger btn-sm d-none" id="import-cancel-btn">
@@ -73,7 +138,7 @@
         </div>
 
         <div id="import-complete-panel" class="alert alert-success alert-dismissible fade show d-none" role="alert">
-            <strong id="import-complete-title">Import finished.</strong>
+            <strong id="import-complete-title">Sync finished.</strong>
             <div id="import-complete-message" class="mb-0"></div>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
@@ -113,8 +178,43 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
 
+        <div id="shipstation-check-status-panel" class="alert alert-info d-none">
+            <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <strong id="shipstation-check-status-title">ShipStation location sync running...</strong>
+                    <span id="shipstation-check-status-badge" class="badge text-bg-info">running</span>
+                </div>
+                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="shipstation-check-cancel-btn">
+                    <i class="bi bi-x-circle"></i> Cancel Check
+                </button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <span id="shipstation-check-progress-label" class="small fw-semibold">0%</span>
+                <span id="shipstation-check-progress-remaining" class="small text-muted"></span>
+            </div>
+            <div class="progress mb-2" style="height: 1.25rem;" aria-label="ShipStation location check progress">
+                <div
+                    id="shipstation-check-progress-bar"
+                    class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                    role="progressbar"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    aria-valuenow="0"
+                    style="width: 0%"
+                ></div>
+            </div>
+            <div id="shipstation-check-status-counts" class="small fw-semibold mb-1"></div>
+            <div id="shipstation-check-status-message" class="small mb-0 text-muted"></div>
+        </div>
+
+        <div id="shipstation-check-complete-panel" class="alert alert-success alert-dismissible fade show d-none" role="alert">
+            <strong id="shipstation-check-complete-title">ShipStation location sync finished.</strong>
+            <div id="shipstation-check-complete-message" class="mb-0"></div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+
         <div class="row mb-3">
-            <div class="col-md-6">
+            <div class="col-md-4">
                 <div class="info-box">
                     <span class="info-box-icon text-bg-primary"><i class="bi bi-grid-3x3-gap"></i></span>
                     <div class="info-box-content">
@@ -123,7 +223,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
                 <div class="info-box">
                     <span class="info-box-icon text-bg-success"><i class="bi bi-clock-history"></i></span>
                     <div class="info-box-content">
@@ -134,12 +234,23 @@
                     </div>
                 </div>
             </div>
+            <div class="col-md-4">
+                <div class="info-box">
+                    <span class="info-box-icon text-bg-info"><i class="bi bi-geo-alt"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Last ShipStation Check</span>
+                        <span class="info-box-number" style="font-size: 1rem;" id="last-shipstation-check-at">
+                            <?= ! empty($lastShipStationCheckAt) ? esc(format_log_datetime($lastShipStationCheckAt)) : 'Never' ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="card">
             <div class="card-header">
                 <form method="get" action="<?= site_url('inventory') ?>" class="row g-2 align-items-end">
-                    <div class="col-md-3">
+                    <div class="col-lg-2 col-md-4">
                         <label for="q" class="form-label small text-muted mb-1">Search</label>
                         <input
                             type="search"
@@ -150,7 +261,7 @@
                             value="<?= esc($search) ?>"
                         >
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-lg-2 col-md-4">
                         <label for="sheet" class="form-label small text-muted mb-1">Sheet tab</label>
                         <select name="sheet" id="sheet" class="form-select">
                             <option value="">All sheets</option>
@@ -161,7 +272,7 @@
                             <?php endforeach ?>
                         </select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-lg-2 col-md-4">
                         <label for="net32" class="form-label small text-muted mb-1">Net32 status</label>
                         <select name="net32" id="net32" class="form-select">
                             <option value="">All rows</option>
@@ -170,21 +281,31 @@
                             <option value="unchecked" <?= $net32Filter === 'unchecked' ? 'selected' : '' ?>>Not checked yet</option>
                         </select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-lg-2 col-md-4">
+                        <label for="shipstation" class="form-label small text-muted mb-1">ShipStation status</label>
+                        <select name="shipstation" id="shipstation" class="form-select">
+                            <option value="">All rows</option>
+                            <option value="missing" <?= ($shipStationFilter ?? '') === 'missing' ? 'selected' : '' ?>>Not in ShipStation</option>
+                            <option value="ok" <?= ($shipStationFilter ?? '') === 'ok' ? 'selected' : '' ?>>In ShipStation</option>
+                            <option value="wrong_warehouse" <?= ($shipStationFilter ?? '') === 'wrong_warehouse' ? 'selected' : '' ?>>Wrong warehouse</option>
+                            <option value="mismatch" <?= ($shipStationFilter ?? '') === 'mismatch' ? 'selected' : '' ?>>Location mismatch</option>
+                        </select>
+                    </div>
+                    <div class="col-lg-2 col-md-4">
                         <label for="qty" class="form-label small text-muted mb-1">Quantity</label>
                         <select name="qty" id="qty" class="form-select">
                             <option value="">All rows</option>
                             <option value="zero" <?= ($quantityFilter ?? '') === 'zero' ? 'selected' : '' ?>>Quantity 0</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-lg-2 col-md-4">
                         <?php if ($perPage !== $defaultPerPage) : ?>
                             <input type="hidden" name="per_page" value="<?= esc($perPage) ?>">
                         <?php endif ?>
                         <button type="submit" class="btn btn-outline-primary">
                             <i class="bi bi-search"></i> Filter
                         </button>
-                        <?php if ($search !== '' || $sheetFilter !== '' || $net32Filter !== '' || ($quantityFilter ?? '') !== '') : ?>
+                        <?php if ($search !== '' || $sheetFilter !== '' || $net32Filter !== '' || ($quantityFilter ?? '') !== '' || ($shipStationFilter ?? '') !== '') : ?>
                             <a href="<?= site_url('inventory') ?>" class="btn btn-outline-secondary">Clear</a>
                         <?php endif ?>
                     </div>
@@ -200,6 +321,7 @@
                     'sheetFilter'    => $sheetFilter,
                     'net32Filter'    => $net32Filter,
                     'quantityFilter' => $quantityFilter ?? '',
+                    'shipStationFilter' => $shipStationFilter ?? '',
                     'perPage'        => $perPage,
                     'perPageOptions' => $perPageOptions,
                 ]) ?>
@@ -241,13 +363,14 @@
                                 <th>Description</th>
                                 <th class="text-end">Qty</th>
                                 <th>Net32</th>
-                                <th class="text-end" style="width: 180px;">Actions</th>
+                                <th>ShipStation</th>
+                                <th class="text-end" style="width: 220px;">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if ($locationGroups === []) : ?>
                                 <tr>
-                                    <td colspan="9" class="text-center text-muted py-4">
+                                    <td colspan="10" class="text-center text-muted py-4">
                                         No inventory rows yet. Click <strong>Import from Google Sheets</strong> or <strong>Add Row</strong>.
                                     </td>
                                 </tr>
@@ -270,6 +393,7 @@
                         'sheetFilter'    => $sheetFilter,
                         'net32Filter'    => $net32Filter,
                         'quantityFilter' => $quantityFilter ?? '',
+                        'shipStationFilter' => $shipStationFilter ?? '',
                         'perPage'        => $perPage,
                         'perPageOptions' => $perPageOptions,
                     ]) ?>
@@ -285,16 +409,81 @@
             <form action="<?= site_url('inventory/sync') ?>" method="post" id="sheets-sync-form">
                 <?= csrf_field() ?>
                 <div class="modal-header">
-                    <h5 class="modal-title" id="import-sheets-modal-label">Import from Google Sheets</h5>
+                    <h5 class="modal-title" id="import-sheets-modal-label">Sync from Google Sheets</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">The import is queued and runs in the background (usually within a minute). Progress appears on the <a href="<?= site_url('logs') ?>">Logs</a> page with status <strong>Running</strong>, then <strong>Completed</strong> or <strong>Failed</strong>.</p>
-                    <p class="text-muted small mb-0">New worksheet tabs (for example <strong>X</strong>) are added to the sheet dropdown automatically when <code>googleSheets.apiKey</code> is set in <code>.env</code> and an import runs.</p>
-                    <div class="mb-0 mt-3">
+                    <p class="text-muted small">Runs in the background (usually within a minute). Progress appears below and on the <a href="<?= site_url('logs') ?>">Logs</a> page.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Sync mode</label>
+                        <div class="vstack gap-2">
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="radio"
+                                    name="import_mode"
+                                    id="import-mode-reconcile"
+                                    value="reconcile"
+                                    checked
+                                >
+                                <label class="form-check-label" for="import-mode-reconcile">
+                                    <strong>Reconcile</strong>
+                                    <span class="text-muted d-block small">Match inventory to the sheet — adds new SKUs, updates moved bins, and <strong>removes SKUs no longer on the sheet</strong>.</span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="radio"
+                                    name="import_mode"
+                                    id="import-mode-import"
+                                    value="import"
+                                >
+                                <label class="form-check-label" for="import-mode-import">
+                                    <strong>Add new only</strong>
+                                    <span class="text-muted d-block small">Only import SKUs that are not already in inventory. Does not update or remove existing rows.</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3" id="import-pipeline-options">
+                        <label class="form-label">After reconcile</label>
+                        <div class="vstack gap-2">
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    name="with_net32"
+                                    id="import-with-net32"
+                                    value="1"
+                                    checked
+                                >
+                                <label class="form-check-label" for="import-with-net32">
+                                    Also sync Net32 quantities
+                                    <span class="text-muted d-block small">Pull current stock levels from Net32 for every SKU in scope.</span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    name="with_shipstation"
+                                    id="import-with-shipstation"
+                                    value="1"
+                                    checked
+                                >
+                                <label class="form-check-label" for="import-with-shipstation">
+                                    Also sync ShipStation locations
+                                    <span class="text-muted d-block small">Move each SKU to its sheet bin in ShipStation (same as the row pin button).</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-0">
                         <label for="import-sheet-name" class="form-label">Sheet tab</label>
                         <select class="form-select" name="sheet_name" id="import-sheet-name" required>
                             <option value="">Choose a sheet...</option>
+                            <option value="*">All sheets</option>
                             <?php foreach ($sheetNames as $name) : ?>
                                 <option value="<?= esc($name) ?>"><?= esc($name) ?></option>
                             <?php endforeach ?>
@@ -304,7 +493,7 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-primary" id="sheets-sync-submit">
-                        <i class="bi bi-arrow-repeat"></i> Start Import
+                        <i class="bi bi-arrow-repeat"></i> Start Sync
                     </button>
                 </div>
             </form>
@@ -337,6 +526,39 @@
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
                     <button type="submit" class="btn btn-warning" id="qty-sync-submit">
                         <i class="bi bi-cloud-download"></i> Start QTY Sync
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="shipstation-check-modal" tabindex="-1" aria-labelledby="shipstation-check-modal-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="<?= site_url('inventory/shipstation-check') ?>" method="post" id="shipstation-check-form">
+                <?= csrf_field() ?>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="shipstation-check-modal-label">ShipStation Location Sync</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Syncs every SKU on the selected sheet with ShipStation — same as the row pin button. Moves existing SKUs to the correct bin location (does not create new SKUs). Runs in the background; progress appears below.</p>
+                    <div class="mb-0">
+                        <label for="shipstation-check-sheet-name" class="form-label">Sheet tab</label>
+                        <select class="form-select" name="sheet_name" id="shipstation-check-sheet-name" required>
+                            <option value="">Choose a sheet...</option>
+                            <option value="*">All sheets</option>
+                            <?php foreach ($sheetNames as $name) : ?>
+                                <option value="<?= esc($name) ?>"><?= esc($name) ?></option>
+                            <?php endforeach ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-info" id="shipstation-check-submit">
+                        <i class="bi bi-geo-alt"></i> Start Location Sync
                     </button>
                 </div>
             </form>
@@ -423,14 +645,18 @@
 <script>
 const importInitialStatus = <?= json_encode($importJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const qtySyncInitialStatus = <?= json_encode($qtySyncJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+const shipStationCheckInitialStatus = <?= json_encode($shipStationCheckJobStatus, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const importStatusUrl = <?= json_encode(site_url('inventory/import-status')) ?>;
 const qtySyncStatusUrl = <?= json_encode(site_url('inventory/qty-sync-status')) ?>;
+const shipStationCheckStatusUrl = <?= json_encode(site_url('inventory/shipstation-check-status')) ?>;
 const importCancelUrl = <?= json_encode(site_url('inventory/import/cancel')) ?>;
 const qtySyncCancelUrl = <?= json_encode(site_url('inventory/qty-sync/cancel')) ?>;
+const shipStationCheckCancelUrl = <?= json_encode(site_url('inventory/shipstation-check/cancel')) ?>;
 const importCsrfName = <?= json_encode(csrf_token()) ?>;
 const importCsrfHash = <?= json_encode(csrf_hash()) ?>;
 const importJobIdFromUrl = <?= json_encode((int) ($importJobId ?? 0)) ?>;
 const qtySyncJobIdFromUrl = <?= json_encode((int) ($qtySyncJobId ?? 0)) ?>;
+const shipStationCheckJobIdFromUrl = <?= json_encode((int) ($shipStationCheckJobId ?? 0)) ?>;
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
 const inventorySheetNames = <?= json_encode(array_values($sheetNames), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const ALERT_DISMISS_MS = 20000;
@@ -905,6 +1131,166 @@ window.addEventListener('pageshow', function (event) {
         feedback.textContent = message;
     }
 
+    function updateShipStationBadge(row, data) {
+        const wrap = row.querySelector('[data-shipstation-badge="sku"]');
+
+        if (!wrap) {
+            return;
+        }
+
+        const exists = data.shipstation_exists;
+        const warehouse = (data.shipstation_warehouse || '').trim();
+        const location = (data.shipstation_location || '').trim();
+        const locationMatches = data.location_matches;
+        const inConfiguredWarehouse = data.in_configured_warehouse;
+        const detailParts = [];
+
+        if (warehouse) {
+            detailParts.push(warehouse);
+        }
+
+        if (location) {
+            detailParts.push(location);
+        }
+
+        const detailText = detailParts.join(' · ');
+        let html = '';
+
+        if (exists === true) {
+            html += '<span class="badge text-bg-success">In ShipStation</span>';
+        } else if (exists === false) {
+            html += '<span class="badge text-bg-danger">Not in ShipStation</span>';
+        } else {
+            html += '<span class="badge text-bg-secondary">Not checked</span>';
+        }
+
+        if (detailText) {
+            html += '<span class="small text-muted" data-shipstation-detail-text>' + escapeHtml(detailText) + '</span>';
+
+            if (inConfiguredWarehouse === false) {
+                html += '<span class="badge text-bg-warning">Wrong warehouse</span>';
+            } else if (locationMatches === false) {
+                html += '<span class="badge text-bg-warning">Location mismatch</span>';
+            } else if (locationMatches === true) {
+                html += '<span class="badge text-bg-light border text-success">Location match</span>';
+            }
+        } else {
+            html += '<span class="small text-muted" data-shipstation-detail-text hidden>—</span>';
+        }
+
+        wrap.innerHTML = html;
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    document.querySelectorAll('.sync-shipstation-location').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const syncUrl = button.dataset.syncUrl;
+            const row = button.closest('tr');
+
+            if (!syncUrl || !row) {
+                return;
+            }
+
+            const originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+
+            fetch(syncUrl, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+            })
+                .then(function (response) {
+                    return response.json().then(function (data) {
+                        return { ok: response.ok, data: data };
+                    });
+                })
+                .then(function (result) {
+                    const data = result.data || {};
+
+                    if (typeof data.shipstation_exists === 'boolean') {
+                        updateShipStationBadge(row, data);
+                    }
+
+                    showCheckQtyFeedback(button, data.message || 'ShipStation sync finished.', !result.ok);
+                })
+                .catch(function () {
+                    showCheckQtyFeedback(button, 'Could not sync ShipStation location. Try again.', true);
+                })
+                .finally(function () {
+                    button.disabled = false;
+                    button.innerHTML = originalHtml;
+                });
+        });
+    });
+
+    document.querySelectorAll('.delete-inventory-row').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const deleteUrl = button.dataset.deleteUrl;
+            const sku = button.dataset.sku || 'this SKU';
+            const row = button.closest('tr');
+
+            if (!deleteUrl || !row) {
+                return;
+            }
+
+            const confirmed = window.confirm(
+                'Remove ' + sku + ' from inventory?\n\n'
+                + 'This only deletes the row from inventory — the Google Sheet is not changed. '
+                + 'If the SKU is still on the sheet, reconcile may add it back.',
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
+            const originalHtml = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+
+            fetch(deleteUrl, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                },
+            })
+                .then(function (response) {
+                    return response.json().then(function (data) {
+                        return { ok: response.ok, data: data };
+                    });
+                })
+                .then(function (result) {
+                    const data = result.data || {};
+
+                    if (!result.ok) {
+                        showCheckQtyFeedback(button, data.message || 'Could not delete this row.', true);
+
+                        return;
+                    }
+
+                    window.location.reload();
+                })
+                .catch(function () {
+                    showCheckQtyFeedback(button, 'Could not delete this row. Try again.', true);
+                })
+                .finally(function () {
+                    button.disabled = false;
+                    button.innerHTML = originalHtml;
+                });
+        });
+    });
+
     document.querySelectorAll('.check-inventory-qty').forEach(function (button) {
         button.addEventListener('click', function () {
             const checkUrl = button.dataset.checkUrl;
@@ -955,6 +1341,34 @@ window.addEventListener('pageshow', function (event) {
     });
 })();
 
+(function () {
+    const pipelineOptions = document.getElementById('import-pipeline-options');
+    const reconcileMode = document.getElementById('import-mode-reconcile');
+    const importMode = document.getElementById('import-mode-import');
+    const net32Checkbox = document.getElementById('import-with-net32');
+    const shipstationCheckbox = document.getElementById('import-with-shipstation');
+
+    function syncPipelineOptionsVisibility() {
+        const show = reconcileMode?.checked ?? true;
+
+        if (pipelineOptions) {
+            pipelineOptions.classList.toggle('d-none', !show);
+        }
+
+        if (net32Checkbox) {
+            net32Checkbox.disabled = !show;
+        }
+
+        if (shipstationCheckbox) {
+            shipstationCheckbox.disabled = !show;
+        }
+    }
+
+    reconcileMode?.addEventListener('change', syncPipelineOptionsVisibility);
+    importMode?.addEventListener('change', syncPipelineOptionsVisibility);
+    syncPipelineOptionsVisibility();
+})();
+
 document.getElementById('sheets-sync-form')?.addEventListener('submit', function () {
     const btn = document.getElementById('sheets-sync-submit');
     if (!btn) return;
@@ -964,6 +1378,13 @@ document.getElementById('sheets-sync-form')?.addEventListener('submit', function
 
 document.getElementById('qty-sync-form')?.addEventListener('submit', function () {
     const btn = document.getElementById('qty-sync-submit');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Starting...';
+});
+
+document.getElementById('shipstation-check-form')?.addEventListener('submit', function () {
+    const btn = document.getElementById('shipstation-check-submit');
     if (!btn) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Starting...';
@@ -992,6 +1413,12 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
     function setImportControlsDisabled(disabled) {
         if (importBtn) importBtn.disabled = disabled;
         if (importSubmit) importSubmit.disabled = disabled;
+
+        const menuBtn = document.getElementById('google-sheets-menu-btn');
+
+        if (menuBtn) {
+            menuBtn.disabled = disabled;
+        }
     }
 
     function setCancelButtonState(status) {
@@ -1043,15 +1470,28 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
     }
 
     function resolveImportProgress(status) {
+        const pipelinePhase = status.pipeline_phase || '';
+        const isPipelinePhase = pipelinePhase === 'net32' || pipelinePhase === 'shipstation';
         const total = Number(status.total) || 0;
         const scanned = Number(status.scanned) || 0;
+        const isReconcile = status.import_mode === 'reconcile';
 
         if (total <= 0) {
+            let preparingLabel = status.status === 'queued'
+                ? 'Preparing sync...'
+                : 'Reading Google Sheets...';
+
+            if (pipelinePhase === 'net32') {
+                preparingLabel = 'Starting Net32 quantity sync...';
+            } else if (pipelinePhase === 'shipstation') {
+                preparingLabel = 'Starting ShipStation location sync...';
+            }
+
             return {
                 completePercent: 0,
                 remainingPercent: 100,
                 remainingCount: 0,
-                label: status.status === 'queued' ? 'Preparing import...' : 'Reading Google Sheets...',
+                label: preparingLabel,
             };
         }
 
@@ -1070,13 +1510,37 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         completePercent = Math.max(0, Math.min(100, completePercent));
         const remainingPercent = Math.max(0, 100 - completePercent);
         const remainingCount = Math.max(0, total - scanned);
+        let statsSuffix = '';
+        let phasePrefix = '';
+
+        if (isPipelinePhase) {
+            phasePrefix = pipelinePhase === 'net32'
+                ? 'Net32 quantities — '
+                : 'ShipStation locations — ';
+        }
+
+        if (isReconcile && !isPipelinePhase) {
+            statsSuffix = ' — added ' + (Number(status.added) || 0)
+                + ', updated ' + (Number(status.updated) || 0)
+                + ', removed ' + (Number(status.removed) || 0)
+                + ', unchanged ' + (Number(status.unchanged) || 0)
+                + ', skipped (new, not in Net32) ' + (Number(status.ignored) || 0);
+        } else if (pipelinePhase === 'net32') {
+            statsSuffix = ' — updated ' + (Number(status.net32_updated) || 0)
+                + ', not found in Net32 ' + (Number(status.net32_missing) || 0);
+        } else if (pipelinePhase === 'shipstation') {
+            statsSuffix = ' — moved ' + (Number(status.shipstation_synced) || 0);
+        } else if (!isReconcile) {
+            statsSuffix = ' — imported ' + (Number(status.imported) || 0);
+        }
 
         return {
             completePercent: completePercent,
             remainingPercent: remainingPercent,
             remainingCount: remainingCount,
-            label: completePercent + '% complete · ' + remainingPercent + '% remaining'
-                + ' (' + scanned + ' of ' + total + ' SKUs, ' + remainingCount + ' left)',
+            label: phasePrefix + completePercent + '% complete · ' + remainingPercent + '% remaining'
+                + ' (' + scanned + ' of ' + total + ' SKUs, ' + remainingCount + ' left)'
+                + statsSuffix,
         };
     }
 
@@ -1140,13 +1604,21 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
             + ' alert-dismissible fade show';
 
         let message = status.progress_message || (
-            status.status === 'cancelled' ? 'Import cancelled.' : 'Import finished.'
+            status.status === 'cancelled'
+                ? (status.import_mode === 'reconcile' ? 'Reconcile cancelled.' : 'Import cancelled.')
+                : (status.import_mode === 'reconcile' ? 'Reconcile finished.' : 'Import finished.')
         );
 
         if (completeTitle) {
-            completeTitle.textContent = status.status === 'cancelled'
-                ? 'Import cancelled.'
-                : (status.status === 'completed' ? 'Import finished.' : 'Import failed.');
+            if (status.status === 'cancelled') {
+                completeTitle.textContent = status.import_mode === 'reconcile' ? 'Sync cancelled.' : 'Import cancelled.';
+            } else if (status.status === 'completed') {
+                completeTitle.textContent = status.import_mode === 'reconcile'
+                    ? ((status.with_net32 || status.with_shipstation) ? 'Full sync finished.' : 'Reconcile finished.')
+                    : 'Import finished.';
+            } else {
+                completeTitle.textContent = status.import_mode === 'reconcile' ? 'Sync failed.' : 'Import failed.';
+            }
         }
 
         if (Array.isArray(status.discovered_sheets) && status.discovered_sheets.length > 0) {
@@ -1176,6 +1648,8 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         const selectedImport = importSelect?.value || '';
         const qtySyncSelect = document.getElementById('qty-sync-sheet-name');
         const selectedQtySync = qtySyncSelect?.value || '';
+        const shipStationCheckSelect = document.getElementById('shipstation-check-sheet-name');
+        const selectedShipStationCheck = shipStationCheckSelect?.value || '';
         const datalist = document.getElementById('inventory-sheet-options');
 
         if (filterSelect) {
@@ -1192,7 +1666,7 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         }
 
         if (importSelect) {
-            importSelect.innerHTML = '<option value="">Choose a sheet...</option>';
+            importSelect.innerHTML = '<option value="">Choose a sheet...</option><option value="*">All sheets</option>';
             names.forEach(function (name) {
                 const option = document.createElement('option');
                 option.value = name;
@@ -1214,6 +1688,19 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
                     option.selected = true;
                 }
                 qtySyncSelect.appendChild(option);
+            });
+        }
+
+        if (shipStationCheckSelect) {
+            shipStationCheckSelect.innerHTML = '<option value="">Choose a sheet...</option><option value="*">All sheets</option>';
+            names.forEach(function (name) {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                if (name === selectedShipStationCheck) {
+                    option.selected = true;
+                }
+                shipStationCheckSelect.appendChild(option);
             });
         }
 
@@ -1374,6 +1861,13 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
     function setQtySyncControlsDisabled(disabled) {
         if (qtySyncBtn) qtySyncBtn.disabled = disabled;
         if (qtySyncSubmit) qtySyncSubmit.disabled = disabled;
+
+        const menuBtn = document.getElementById('sync-check-menu-btn');
+        const checkDisabled = document.getElementById('shipstation-check-btn')?.disabled ?? false;
+
+        if (menuBtn) {
+            menuBtn.disabled = disabled && checkDisabled;
+        }
     }
 
     function updateLastNet32QtySyncDisplay(status) {
@@ -1678,6 +2172,312 @@ document.getElementById('qty-sync-form')?.addEventListener('submit', function ()
         const finishedAt = new Date(String(qtySyncInitialStatus.finished_at).replace(' ', 'T'));
         if (!Number.isNaN(finishedAt.getTime()) && (Date.now() - finishedAt.getTime()) < 15000) {
             showComplete(qtySyncInitialStatus);
+        }
+    }
+})();
+</script>
+
+<script>
+(function () {
+    const panel = document.getElementById('shipstation-check-status-panel');
+    const completePanel = document.getElementById('shipstation-check-complete-panel');
+    const progressBar = document.getElementById('shipstation-check-progress-bar');
+    const progressLabel = document.getElementById('shipstation-check-progress-label');
+    const progressRemaining = document.getElementById('shipstation-check-progress-remaining');
+    const statusBadge = document.getElementById('shipstation-check-status-badge');
+    const statusCounts = document.getElementById('shipstation-check-status-counts');
+    const statusMessage = document.getElementById('shipstation-check-status-message');
+    const completeMessage = document.getElementById('shipstation-check-complete-message');
+    const completeTitle = document.getElementById('shipstation-check-complete-title');
+    const checkBtn = document.getElementById('shipstation-check-btn');
+    const checkSubmit = document.getElementById('shipstation-check-submit');
+    const checkCancelBtn = document.getElementById('shipstation-check-cancel-btn');
+    let pollTimer = null;
+    let cancelRequested = false;
+    let activeJobId = shipStationCheckJobIdFromUrl > 0
+        ? shipStationCheckJobIdFromUrl
+        : (shipStationCheckInitialStatus?.job_id ?? null);
+
+    function setCheckControlsDisabled(disabled) {
+        if (checkBtn) checkBtn.disabled = disabled;
+        if (checkSubmit) checkSubmit.disabled = disabled;
+
+        const menuBtn = document.getElementById('sync-check-menu-btn');
+        const qtyDisabled = document.getElementById('qty-sync-btn')?.disabled ?? false;
+
+        if (menuBtn) {
+            menuBtn.disabled = disabled && qtyDisabled;
+        }
+    }
+
+    function updateLastShipStationCheckDisplay(status) {
+        const element = document.getElementById('last-shipstation-check-at');
+
+        if (!element || !status?.last_shipstation_check_at_display) {
+            return;
+        }
+
+        element.textContent = status.last_shipstation_check_at_display;
+    }
+
+    function setCancelButtonState(status) {
+        if (!checkCancelBtn) {
+            return;
+        }
+
+        const canCancel = !!status?.can_cancel && !cancelRequested;
+        const forceStop = !!status?.cancel_requested || cancelRequested;
+        checkCancelBtn.classList.toggle('d-none', !status?.is_active);
+        checkCancelBtn.disabled = !status?.is_active || (!canCancel && !forceStop);
+        checkCancelBtn.dataset.forceStop = forceStop ? '1' : '0';
+        checkCancelBtn.innerHTML = forceStop
+            ? '<i class="bi bi-x-octagon"></i> Force Stop Sync'
+            : '<i class="bi bi-x-circle"></i> Cancel Sync';
+    }
+
+    function resolveProgress(status) {
+        const total = Number(status.total) || 0;
+        const processed = Number(status.processed) || 0;
+
+        if (total <= 0) {
+            return {
+                completePercent: 0,
+                remainingPercent: 100,
+                label: status.status === 'queued' ? 'Preparing location sync...' : 'Starting ShipStation sync...',
+            };
+        }
+
+        let completePercent = status.percent;
+
+        if (completePercent === null || completePercent === undefined) {
+            completePercent = Math.floor((processed / total) * 100);
+        }
+
+        if (processed >= total) {
+            completePercent = 100;
+        } else if (processed > 0 && completePercent === 0) {
+            completePercent = 1;
+        }
+
+        completePercent = Math.max(0, Math.min(100, completePercent));
+
+        return {
+            completePercent: completePercent,
+            remainingPercent: Math.max(0, 100 - completePercent),
+            label: completePercent + '% complete · ' + Math.max(0, 100 - completePercent) + '% remaining'
+                + ' (' + processed + ' of ' + total + ' SKUs)'
+                + ' — moved ' + (Number(status.synced) || 0)
+                + ', match ' + (Number(status.matched) || 0)
+                + ', mismatch ' + (Number(status.mismatched) || 0)
+                + ', missing ' + (Number(status.missing) || 0)
+                + ', empty ' + (Number(status.empty_location) || 0),
+        };
+    }
+
+    function resolveAlertClass(status) {
+        if (status === 'completed') return 'success';
+        if (status === 'cancelled') return 'warning';
+        return 'danger';
+    }
+
+    function resolveBadgeClass(status) {
+        if (status === 'failed') return 'danger';
+        if (status === 'completed') return 'success';
+        if (status === 'cancelled') return 'secondary';
+        if (status === 'queued') return 'info';
+        return 'info';
+    }
+
+    function setProgress(status) {
+        if (!status || !panel || status.status === 'none') {
+            return;
+        }
+
+        const progress = resolveProgress(status);
+        const isPreparing = (Number(status.total) || 0) <= 0 && status.is_active;
+
+        if (progressBar) {
+            progressBar.style.width = isPreparing ? '0%' : progress.completePercent + '%';
+            progressBar.classList.add('progress-bar-animated', 'progress-bar-striped');
+            progressBar.parentElement?.setAttribute('aria-valuenow', isPreparing ? '0' : String(progress.completePercent));
+        }
+
+        if (progressLabel) {
+            progressLabel.textContent = isPreparing ? 'Preparing...' : progress.completePercent + '% complete';
+        }
+
+        if (progressRemaining) {
+            progressRemaining.textContent = isPreparing ? '' : progress.remainingPercent + '% remaining';
+        }
+
+        statusBadge.textContent = status.status;
+        statusBadge.className = 'badge text-bg-' + resolveBadgeClass(status.status);
+
+        if (statusCounts) {
+            statusCounts.textContent = progress.label;
+        }
+
+        statusMessage.textContent = status.progress_message || 'Syncing ShipStation locations...';
+        setCancelButtonState(status);
+        updateLastShipStationCheckDisplay(status);
+
+        if (status.is_active) {
+            panel.classList.remove('d-none');
+            completePanel.classList.add('d-none');
+            setCheckControlsDisabled(true);
+        }
+    }
+
+    function showComplete(status) {
+        if (!completePanel || !panel) {
+            return;
+        }
+
+        panel.classList.add('d-none');
+        completePanel.classList.remove('d-none');
+        completePanel.className = 'alert alert-' + resolveAlertClass(status.status) + ' alert-dismissible fade show';
+
+        if (completeTitle) {
+            completeTitle.textContent = status.status === 'cancelled'
+                ? 'ShipStation location sync cancelled.'
+                : 'ShipStation location sync finished.';
+        }
+
+        completeMessage.textContent = status.progress_message || completeTitle.textContent;
+        updateLastShipStationCheckDisplay(status);
+        setCheckControlsDisabled(false);
+        setCancelButtonState(null);
+        cancelRequested = false;
+
+        if (status.job_id) {
+            sessionStorage.setItem('inventory-shipstation-check-complete-' + status.job_id, '1');
+        }
+
+        if (status.status === 'completed') {
+            window.setTimeout(function () {
+                window.location.reload();
+            }, 1500);
+        }
+    }
+
+    function cancelCheckJob() {
+        if (!activeJobId) {
+            return;
+        }
+
+        const isForceStop = checkCancelBtn?.dataset.forceStop === '1';
+        const confirmMessage = isForceStop
+            ? 'Force stop this ShipStation location sync now?'
+            : 'Cancel this ShipStation location sync? Rows already synced will stay updated.';
+
+        if (!window.confirm(confirmMessage)) {
+            return;
+        }
+
+        if (!isForceStop) {
+            cancelRequested = true;
+        }
+
+        setCancelButtonState({ is_active: true, can_cancel: false, cancel_requested: true });
+
+        const body = new URLSearchParams();
+        body.set(importCsrfName, importCsrfHash);
+        body.set('job_id', String(activeJobId));
+
+        fetch(shipStationCheckCancelUrl, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+        })
+            .then(function (response) {
+                return response.json().then(function (data) {
+                    return { ok: response.ok, data: data };
+                });
+            })
+            .then(function (result) {
+                const data = result.data || {};
+
+                if (!result.ok || !data.ok) {
+                    cancelRequested = false;
+                    window.alert(data.message || 'Could not cancel the location check.');
+                    setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+                    return;
+                }
+
+                if (data.status === 'cancelled') {
+                    cancelRequested = false;
+                    poll();
+                    return;
+                }
+
+                setCancelButtonState({ is_active: true, can_cancel: false, cancel_requested: true });
+                poll();
+            })
+            .catch(function () {
+                cancelRequested = false;
+                window.alert('Could not cancel the location check. Please try again.');
+                setCancelButtonState({ is_active: true, can_cancel: true, cancel_requested: false });
+            });
+    }
+
+    checkCancelBtn?.addEventListener('click', cancelCheckJob);
+
+    function poll() {
+        const url = activeJobId ? shipStationCheckStatusUrl + '?job_id=' + activeJobId : shipStationCheckStatusUrl;
+
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) { return response.json(); })
+            .then(function (status) {
+                if (!status || status.status === 'none') {
+                    clearInterval(pollTimer);
+                    setCheckControlsDisabled(false);
+                    setCancelButtonState(null);
+                    cancelRequested = false;
+                    return;
+                }
+
+                activeJobId = status.job_id;
+                setProgress(status);
+
+                if (!status.is_active) {
+                    clearInterval(pollTimer);
+                    showComplete(status);
+                }
+            })
+            .catch(function () {
+                clearInterval(pollTimer);
+                setCheckControlsDisabled(false);
+                setCancelButtonState(null);
+                cancelRequested = false;
+            });
+    }
+
+    if ((shipStationCheckInitialStatus && shipStationCheckInitialStatus.is_active) || shipStationCheckJobIdFromUrl > 0) {
+        if (shipStationCheckInitialStatus) {
+            setProgress(shipStationCheckInitialStatus);
+        } else if (panel) {
+            panel.classList.remove('d-none');
+            if (progressLabel) progressLabel.textContent = 'Preparing...';
+            if (statusCounts) statusCounts.textContent = 'Starting location check...';
+            setCheckControlsDisabled(true);
+        }
+
+        poll();
+        pollTimer = setInterval(poll, 2000);
+    } else if (
+        shipStationCheckInitialStatus
+        && !shipStationCheckInitialStatus.is_active
+        && shipStationCheckInitialStatus.finished_at
+        && shipStationCheckInitialStatus.job_id
+        && !sessionStorage.getItem('inventory-shipstation-check-complete-' + shipStationCheckInitialStatus.job_id)
+    ) {
+        const finishedAt = new Date(String(shipStationCheckInitialStatus.finished_at).replace(' ', 'T'));
+        if (!Number.isNaN(finishedAt.getTime()) && (Date.now() - finishedAt.getTime()) < 15000) {
+            showComplete(shipStationCheckInitialStatus);
         }
     }
 })();

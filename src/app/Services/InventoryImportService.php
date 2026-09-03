@@ -411,11 +411,11 @@ class InventoryImportService
      */
     private function resolveSheetNames(?string $onlySheet): array
     {
-        if ($onlySheet !== null && $onlySheet !== '') {
+        if ($onlySheet !== null && $onlySheet !== '' && $onlySheet !== '*') {
             return [$onlySheet];
         }
 
-        return $this->sheets->listSheetNames();
+        return $this->sheets->listSheetNamesAscending();
     }
 
     /**

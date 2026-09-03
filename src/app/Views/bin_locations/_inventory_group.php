@@ -24,7 +24,8 @@ $hasAlternateRows = $displayAlternates !== [];
     <?php
     $location = $primaryLocation;
     $isAlternate = false;
-    echo view('bin_locations/_inventory_row_cells', compact('location', 'isAlternate'));
+    $canDelete = empty($location['is_main_sku']) || $alternates === [];
+    echo view('bin_locations/_inventory_row_cells', compact('location', 'isAlternate', 'canDelete'));
     ?>
 </tr>
 
@@ -35,7 +36,8 @@ $hasAlternateRows = $displayAlternates !== [];
     >
         <?php
         $isAlternate = true;
-        echo view('bin_locations/_inventory_row_cells', compact('location', 'isAlternate'));
+        $canDelete = true;
+        echo view('bin_locations/_inventory_row_cells', compact('location', 'isAlternate', 'canDelete'));
         ?>
     </tr>
 <?php endforeach ?>
