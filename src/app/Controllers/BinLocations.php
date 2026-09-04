@@ -459,7 +459,7 @@ class BinLocations extends BaseController
 
     private function normalizeShipStationFilter(string $filter): ?string
     {
-        return in_array($filter, ['missing', 'ok', 'mismatch', 'wrong_warehouse'], true) ? $filter : null;
+        return in_array($filter, ['missing', 'ok', 'mismatch', 'wrong_warehouse', 'unchecked'], true) ? $filter : null;
     }
 
     /**

@@ -289,6 +289,7 @@
                             <option value="ok" <?= ($shipStationFilter ?? '') === 'ok' ? 'selected' : '' ?>>In ShipStation</option>
                             <option value="wrong_warehouse" <?= ($shipStationFilter ?? '') === 'wrong_warehouse' ? 'selected' : '' ?>>Wrong warehouse</option>
                             <option value="mismatch" <?= ($shipStationFilter ?? '') === 'mismatch' ? 'selected' : '' ?>>Location mismatch</option>
+                            <option value="unchecked" <?= ($shipStationFilter ?? '') === 'unchecked' ? 'selected' : '' ?>>Not checked</option>
                         </select>
                     </div>
                     <div class="col-lg-2 col-md-4">

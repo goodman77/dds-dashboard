@@ -224,6 +224,8 @@ class InventoryModel extends Model
 
         if ($shipStationFilter === 'missing') {
             $builder->where('shipstation_exists', 0);
+        } elseif ($shipStationFilter === 'unchecked') {
+            $builder->where('shipstation_exists', null);
         } else {
             $this->applyShipStationStatusFilter($builder, $shipStationFilter);
         }
@@ -1076,6 +1078,8 @@ class InventoryModel extends Model
 
         if ($shipStationFilter === 'missing') {
             $this->where('shipstation_exists', 0);
+        } elseif ($shipStationFilter === 'unchecked') {
+            $this->where('shipstation_exists', null);
         } else {
             $this->applyShipStationStatusFilterToModel($shipStationFilter);
         }
