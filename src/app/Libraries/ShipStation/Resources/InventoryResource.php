@@ -279,9 +279,17 @@ class InventoryResource
 
             $row = $this->enrichInventoryItem($sku, $item);
 
-            if ($row !== null) {
-                $rows[] = $row;
+            if ($row === null) {
+                continue;
             }
+
+            // Skip leftover qty on a deleted ShipStation bin so one ghost
+            // location cannot abort the whole SKU lookup.
+            if (($row['location_id'] ?? null) !== null && ($row['warehouse_id'] ?? null) === null) {
+                continue;
+            }
+
+            $rows[] = $row;
         }
 
         if ($sku !== '') {
@@ -540,8 +548,19 @@ class InventoryResource
             }
         }
 
-        $response = $this->client->get('inventory_locations/' . rawurlencode($locationId));
-        $name     = $this->stringOrNull($response['name'] ?? null);
+        try {
+            $response = $this->client->get('inventory_locations/' . rawurlencode($locationId));
+        } catch (ShipStationApiException $exception) {
+            if ($this->isMissingLocationError($exception)) {
+                $this->locationNameCache[$locationId] = null;
+
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        $name = $this->stringOrNull($response['name'] ?? null);
         $this->locationNameCache[$locationId] = $name;
 
         return $name;
@@ -778,6 +797,34 @@ class InventoryResource
     private function isDuplicateLocationError(ShipStationApiException $exception): bool
     {
         return stripos($exception->getMessage(), 'already exists') !== false;
+    }
+
+    public function isMissingLocationError(ShipStationApiException $exception): bool
+    {
+        if (stripos($exception->getMessage(), 'Inventory Location not found') !== false) {
+            return true;
+        }
+
+        $errors = $exception->getResponseBody()['errors'] ?? [];
+
+        if (! is_array($errors)) {
+            return false;
+        }
+
+        foreach ($errors as $error) {
+            if (! is_array($error)) {
+                continue;
+            }
+
+            $code    = strtolower((string) ($error['error_code'] ?? ''));
+            $message = strtolower((string) ($error['message'] ?? ''));
+
+            if ($code === 'invalid_identifier' && str_contains($message, 'location not found')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function incrementInventoryAtLocation(string $locationId, string $sku, int $quantity, string $reason = ''): void

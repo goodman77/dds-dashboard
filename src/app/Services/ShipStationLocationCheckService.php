@@ -49,15 +49,15 @@ class ShipStationLocationCheckService
             $result = $this->shipStationInventory->findBestLocationForSku($sku, $expectedLocation);
         } catch (ShipStationApiException $exception) {
             $this->inventory->update($id, [
-                'shipstation_exists'    => null,
-                'shipstation_checked_at'=> $checkedAt,
+                'shipstation_exists'     => 0,
+                'shipstation_checked_at' => $checkedAt,
             ]);
 
             return [
-                'ok'                  => false,
-                'message'             => $exception->getMessage(),
-                'expected_location'   => $expectedLocation,
-                'shipstation_exists'  => null,
+                'ok'                 => false,
+                'message'            => $exception->getMessage(),
+                'expected_location'  => $expectedLocation,
+                'shipstation_exists' => false,
             ];
         }
 

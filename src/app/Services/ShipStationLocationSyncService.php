@@ -328,6 +328,10 @@ class ShipStationLocationSyncService
                     continue;
                 }
 
+                if (($source['warehouse_id'] ?? null) === null || trim((string) ($source['location_name'] ?? '')) === '') {
+                    continue;
+                }
+
                 if ($sourceLocationId === $targetLocationId) {
                     $totalOnHand += $onHand;
 
@@ -393,21 +397,9 @@ class ShipStationLocationSyncService
                 true,
             );
         } catch (ShipStationApiException $exception) {
-            return array_merge($this->existingShipStationState($row), [
-                'ok'                => false,
-                'wrote'             => false,
-                'throttle'          => true,
-                'message'           => $exception->getMessage(),
-                'expected_location' => $expectedLocation,
-            ]);
+            return $this->recordExceptionState($id, $sku, $expectedLocation, $exception);
         } catch (\Throwable $exception) {
-            return array_merge($this->existingShipStationState($row), [
-                'ok'                => false,
-                'wrote'             => false,
-                'throttle'          => true,
-                'message'           => $exception->getMessage(),
-                'expected_location' => $expectedLocation,
-            ]);
+            return $this->recordExceptionState($id, $sku, $expectedLocation, $exception);
         }
     }
 
@@ -616,6 +608,71 @@ class ShipStationLocationSyncService
             $warehouseName ?? 'where stock was found',
             $this->shipStationInventory->getConfiguredWarehouseLabel(),
         );
+    }
+
+    /**
+     * Persist a ShipStation status even when the API call fails, so the row
+     * does not stay stuck on "Not checked".
+     *
+     * @return array<string, mixed>
+     */
+    private function recordExceptionState(
+        int $id,
+        string $sku,
+        ?string $expectedLocation,
+        \Throwable $exception,
+    ): array {
+        $message = $exception->getMessage();
+
+        try {
+            $best = $this->shipStationInventory->findBestLocationForSku($sku, $expectedLocation);
+        } catch (ShipStationApiException) {
+            $best = null;
+        }
+
+        if ($best !== null) {
+            $result = $this->recordObservedState(
+                $id,
+                $sku,
+                $expectedLocation,
+                $best['location_name'] ?? null,
+                $best['warehouse_name'] ?? null,
+                (int) ($best['on_hand'] ?? 0),
+                true,
+                $this->locationCheck->locationsMatch($expectedLocation, $best['location_name'] ?? null),
+                (bool) ($best['in_configured_warehouse'] ?? false),
+                $message,
+                false,
+            );
+            $result['throttle'] = true;
+
+            return $result;
+        }
+
+        $checkedAt = date('Y-m-d H:i:s');
+
+        $this->inventory->update($id, [
+            'shipstation_location'         => null,
+            'shipstation_warehouse'        => null,
+            'shipstation_on_hand'          => null,
+            'shipstation_exists'           => 0,
+            'shipstation_location_matches' => null,
+            'shipstation_checked_at'       => $checkedAt,
+        ]);
+
+        return [
+            'ok'                      => false,
+            'wrote'                   => false,
+            'throttle'                => true,
+            'message'                 => $message,
+            'expected_location'       => $expectedLocation,
+            'shipstation_exists'      => false,
+            'shipstation_location'    => null,
+            'shipstation_warehouse'   => null,
+            'shipstation_on_hand'     => null,
+            'location_matches'        => null,
+            'in_configured_warehouse' => null,
+        ];
     }
 
     /**
