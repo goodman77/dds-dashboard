@@ -498,7 +498,13 @@ class BinLocations extends BaseController
             }
 
             if (! empty($location['is_main_sku'])) {
-                $groups[$key]['main'] = $location;
+                if ($groups[$key]['main'] === null) {
+                    $groups[$key]['main'] = $location;
+                } else {
+                    // Same bin can have two "main" SKUs (e.g. House Brand + Valdent).
+                    // Keep the first as the group main and still show the rest.
+                    $groups[$key]['alternates'][] = $location;
+                }
 
                 continue;
             }

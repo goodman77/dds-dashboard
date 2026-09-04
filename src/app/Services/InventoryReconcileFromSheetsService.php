@@ -107,7 +107,7 @@ class InventoryReconcileFromSheetsService
             $this->progressLine('Reading Google Sheets and building reconcile plan...', 'cyan');
         }
 
-        /** @var array<string, array<string, array<string, mixed>>> $entriesBySheet sku_key => entry, keyed by sheet */
+        /** @var array<string, array<string, array<string, mixed>>> $entriesBySheet location key => entry, keyed by sheet */
         $entriesBySheet = [];
         $globalSkuOwner = [];
 
@@ -123,14 +123,22 @@ class InventoryReconcileFromSheetsService
                 $sheetMap = [];
 
                 foreach ($entries as $entry) {
-                    $skuKey = strtoupper($entry['sku']);
+                    $skuKey   = strtoupper($entry['sku']);
+                    $entryKey = $this->locationKey(
+                        (string) $entry['sheet_name'],
+                        (string) $entry['rack'],
+                        (string) $entry['bin'],
+                        (string) $entry['sku'],
+                    );
 
-                    if (isset($sheetMap[$skuKey])) {
+                    if (isset($sheetMap[$entryKey])) {
                         $errors[] = sprintf(
-                            'Sheet "%s": SKU %s appears more than once (rows %d and %d).',
+                            'Sheet "%s": SKU %s appears more than once in rack %s / bin %s (rows %d and %d).',
                             $sheetName,
                             $entry['sku'],
-                            (int) $sheetMap[$skuKey]['sheet_row'],
+                            $entry['rack'],
+                            $entry['bin'],
+                            (int) $sheetMap[$entryKey]['sheet_row'],
                             (int) $entry['sheet_row'],
                         );
 
@@ -148,8 +156,8 @@ class InventoryReconcileFromSheetsService
                         continue;
                     }
 
-                    $sheetMap[$skuKey]     = $entry;
-                    $globalSkuOwner[$skuKey] = $sheetName;
+                    $sheetMap[$entryKey]       = $entry;
+                    $globalSkuOwner[$skuKey]   = $sheetName;
                 }
 
                 $entriesBySheet[(string) $sheetName] = $sheetMap;
@@ -185,7 +193,7 @@ class InventoryReconcileFromSheetsService
             );
         }
 
-        $inventoryBySku = $this->indexInventoryBySku();
+        $inventoryByLocation = $this->indexInventoryByLocation();
 
         foreach ($entriesBySheet as $sheetName => $sheetEntries) {
             $sheetName = (string) $sheetName;
@@ -213,10 +221,15 @@ class InventoryReconcileFromSheetsService
                 }
 
                 $scanned++;
-                $sku     = $entry['sku'];
-                $skuKey  = strtoupper($sku);
-                $prefix  = $this->formatProgressPrefix($scanned, $grandTotal, $entry);
-                $existing = $inventoryBySku[$skuKey] ?? null;
+                $sku      = $entry['sku'];
+                $entryKey = $this->locationKey(
+                    (string) $entry['sheet_name'],
+                    (string) $entry['rack'],
+                    (string) $entry['bin'],
+                    $sku,
+                );
+                $prefix   = $this->formatProgressPrefix($scanned, $grandTotal, $entry);
+                $existing = $inventoryByLocation[$entryKey] ?? null;
                 $forcePoll = false;
 
                 if ($existing === null) {
@@ -241,11 +254,20 @@ class InventoryReconcileFromSheetsService
                         return $this->finish($cancelled, $dryRun, $logActivity);
                     }
 
-                    $addedResult = $this->addEntryFromSheet($entry, $syncedAt, $delaySeconds, $dryRun, $prefix, $errors);
+                    $template    = $this->findInventoryRowBySku($inventoryByLocation, $sku);
+                    $addedResult = $template !== null
+                        ? $this->addEntryFromExistingInventory($entry, $template, $syncedAt, $dryRun, $prefix, $errors)
+                        : $this->addEntryFromSheet($entry, $syncedAt, $delaySeconds, $dryRun, $prefix, $errors);
 
                     if ($addedResult === 'added') {
                         $added++;
-                        $inventoryBySku[$skuKey] = array_merge($entry, [
+                        $saved = $this->inventory->findByPosition(
+                            (string) $entry['sheet_name'],
+                            (string) $entry['rack'],
+                            (string) $entry['bin'],
+                            $sku,
+                        );
+                        $inventoryByLocation[$entryKey] = $saved ?? array_merge($entry, [
                             'sku'        => $sku,
                             'sheet_name' => $entry['sheet_name'],
                             'rack'       => $entry['rack'],
@@ -280,7 +302,7 @@ class InventoryReconcileFromSheetsService
                             'is_main_sku' => $record['is_main_sku'],
                         ])) {
                             $updated++;
-                            $inventoryBySku[$skuKey] = $record;
+                            $inventoryByLocation[$entryKey] = $record;
                             $forcePoll = true;
                             service('activityLog')->logInventoryEdit(
                                 $existing,
@@ -362,12 +384,12 @@ class InventoryReconcileFromSheetsService
                 );
             }
 
-            foreach ($inventoryBySku as $skuKey => $row) {
+            foreach ($inventoryByLocation as $locationKey => $row) {
                 if (strcasecmp((string) ($row['sheet_name'] ?? ''), $sheetName) !== 0) {
                     continue;
                 }
 
-                if ($skuKey === '' || isset($sheetEntries[$skuKey])) {
+                if (isset($sheetEntries[$locationKey])) {
                     continue;
                 }
 
@@ -383,19 +405,19 @@ class InventoryReconcileFromSheetsService
 
                 if ($dryRun) {
                     $removed++;
-                    unset($inventoryBySku[$skuKey]);
-                    $this->progressLine($prefix . 'would remove (not on sheet).', 'yellow');
+                    unset($inventoryByLocation[$locationKey]);
+                    $this->progressLine($prefix . 'would remove (not on sheet at this bin).', 'yellow');
 
                     continue;
                 }
 
                 if ($rowId > 0 && $this->inventory->delete($rowId)) {
                     $removed++;
-                    unset($inventoryBySku[$skuKey]);
-                    $this->progressLine($prefix . 'removed (not on sheet).', 'yellow');
+                    unset($inventoryByLocation[$locationKey]);
+                    $this->progressLine($prefix . 'removed (not on sheet at this bin).', 'yellow');
                 } elseif ($rowId <= 0) {
                     $removed++;
-                    unset($inventoryBySku[$skuKey]);
+                    unset($inventoryByLocation[$locationKey]);
                 } else {
                     $errors[] = sprintf('Could not remove SKU %s (id %d).', $sku, $rowId);
                     $this->progressLine($prefix . 'failed to remove.', 'red');
@@ -474,6 +496,56 @@ class InventoryReconcileFromSheetsService
 
         if ($saved) {
             $this->progressLine(sprintf('%sadded (qty %d).', $prefix, $offer['quantity']), 'green');
+
+            return 'added';
+        }
+
+        $errors[] = sprintf('Could not save %s/%s/%s SKU %s.', $entry['sheet_name'], $entry['rack'], $entry['bin'], $sku);
+        $this->progressLine($prefix . 'failed to save to database.', 'red');
+
+        return 'failed';
+    }
+
+    /**
+     * Add a SKU at another bin using name/qty already stored for that SKU (no Net32 call).
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $source
+     *
+     * @return 'added'|'failed'
+     */
+    private function addEntryFromExistingInventory(
+        array $entry,
+        array $source,
+        string $syncedAt,
+        bool $dryRun,
+        string $prefix,
+        array &$errors,
+    ): string {
+        $sku = $entry['sku'];
+
+        if ($dryRun) {
+            $this->progressLine($prefix . 'would add (already in inventory at another bin).', 'green');
+
+            return 'added';
+        }
+
+        $saved = $this->inventory->insertSkuRecord([
+            'sheet_name'       => $entry['sheet_name'],
+            'rack'             => $entry['rack'],
+            'bin'              => $entry['bin'],
+            'sku'              => $sku,
+            'is_main_sku'      => ! empty($entry['is_main_sku']) ? 1 : 0,
+            'name'             => $source['name'] ?? null,
+            'description'      => $source['description'] ?? null,
+            'quantity'         => (int) ($source['quantity'] ?? 0),
+            'sku_net32_exists' => $source['sku_net32_exists'] ?? 1,
+            'net32_checked_at' => $source['net32_checked_at'] ?? $syncedAt,
+            'synced_at'        => $syncedAt,
+        ]);
+
+        if ($saved) {
+            $this->progressLine($prefix . 'added (copied from existing inventory row).', 'green');
 
             return 'added';
         }
@@ -575,21 +647,56 @@ class InventoryReconcileFromSheetsService
     /**
      * @return array<string, array<string, mixed>>
      */
-    private function indexInventoryBySku(): array
+    private function indexInventoryByLocation(): array
     {
         $index = [];
 
         foreach ($this->inventory->findAllForQuantitySync() as $row) {
-            $skuKey = strtoupper(trim((string) ($row['sku'] ?? '')));
+            $key = $this->locationKey(
+                (string) ($row['sheet_name'] ?? ''),
+                (string) ($row['rack'] ?? ''),
+                (string) ($row['bin'] ?? ''),
+                (string) ($row['sku'] ?? ''),
+            );
 
-            if ($skuKey === '' || isset($index[$skuKey])) {
+            if ($key === '|||' || isset($index[$key])) {
                 continue;
             }
 
-            $index[$skuKey] = $row;
+            $index[$key] = $row;
         }
 
         return $index;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $inventoryByLocation
+     *
+     * @return array<string, mixed>|null
+     */
+    private function findInventoryRowBySku(array $inventoryByLocation, string $sku): ?array
+    {
+        $skuKey = strtoupper(trim($sku));
+
+        if ($skuKey === '') {
+            return null;
+        }
+
+        foreach ($inventoryByLocation as $row) {
+            if (strtoupper(trim((string) ($row['sku'] ?? ''))) === $skuKey) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    private function locationKey(string $sheetName, string $rack, string $bin, string $sku): string
+    {
+        return strtoupper(trim($sheetName))
+            . '|' . strtoupper(trim($rack))
+            . '|' . strtoupper(trim($bin))
+            . '|' . strtoupper(trim($sku));
     }
 
     /**
