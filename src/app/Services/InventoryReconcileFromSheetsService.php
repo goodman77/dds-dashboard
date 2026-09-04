@@ -15,7 +15,15 @@ class InventoryReconcileFromSheetsService
 {
     public const ALL_SHEETS = '*';
 
+    private const JOB_POLL_SKU_INTERVAL = 25;
+
+    private const JOB_POLL_SECONDS = 1.0;
+
     private bool $showProgress = false;
+
+    private int $lastJobPollScanned = 0;
+
+    private float $lastJobPollAt = 0.0;
 
     public function __construct(
         private readonly GoogleSheetsClient $sheets,
@@ -51,6 +59,8 @@ class InventoryReconcileFromSheetsService
         $delaySeconds ??= (float) config('Net32')->requestDelaySeconds;
         $this->showProgress = $verbose && is_cli();
         $syncedAt           = date('Y-m-d H:i:s');
+        $this->lastJobPollScanned = 0;
+        $this->lastJobPollAt      = 0.0;
 
         $added      = 0;
         $updated    = 0;
@@ -175,123 +185,16 @@ class InventoryReconcileFromSheetsService
             );
         }
 
+        $inventoryBySku = $this->indexInventoryBySku();
+
         foreach ($entriesBySheet as $sheetName => $sheetEntries) {
             $sheetName = (string) $sheetName;
 
             foreach ($sheetEntries as $entry) {
-                $cancelled = $this->buildCancelledReconcileResult(
+                $cancelled = $this->pollReconcileJob(
                     $jobId,
                     $onlySheet,
                     $sheetCount,
-                    $scanned,
-                    $added,
-                    $updated,
-                    $removed,
-                    $unchanged,
-                    $ignored,
-                    $errors,
-                    $discoveredSheets ?? [],
-                );
-
-                if ($cancelled !== null) {
-                    return $this->finish($cancelled, $dryRun, $logActivity);
-                }
-
-                $scanned++;
-                $sku    = $entry['sku'];
-                $prefix = $this->formatProgressPrefix($scanned, $grandTotal, $entry);
-                $existing = $this->inventory->findBySku($sku);
-
-                if ($existing === null) {
-                    $addedResult = $this->addEntryFromSheet($entry, $syncedAt, $delaySeconds, $dryRun, $prefix, $errors);
-
-                    if ($addedResult === 'added') {
-                        $added++;
-                    } elseif ($addedResult === 'ignored') {
-                        $ignored++;
-                    }
-
-                    $this->tickReconcileProgress(
-                        $jobId,
-                        $scanned,
-                        $grandTotal,
-                        $entry,
-                        $added,
-                        $updated,
-                        $removed,
-                        $unchanged,
-                        $ignored,
-                    );
-
-                    continue;
-                }
-
-                $changes = $this->detectLocationChanges($existing, $entry);
-
-                if ($changes === []) {
-                    $unchanged++;
-                    $this->progressLine($prefix . 'unchanged.', 'light_gray');
-                    $this->tickReconcileProgress(
-                        $jobId,
-                        $scanned,
-                        $grandTotal,
-                        $entry,
-                        $added,
-                        $updated,
-                        $removed,
-                        $unchanged,
-                        $ignored,
-                    );
-
-                    continue;
-                }
-
-                if ($dryRun) {
-                    $updated++;
-                    $this->progressLine($prefix . 'would update location.', 'yellow');
-                    $this->tickReconcileProgress(
-                        $jobId,
-                        $scanned,
-                        $grandTotal,
-                        $entry,
-                        $added,
-                        $updated,
-                        $removed,
-                        $unchanged,
-                        $ignored,
-                    );
-
-                    continue;
-                }
-
-                $record = array_merge($existing, [
-                    'sheet_name'  => $entry['sheet_name'],
-                    'rack'        => $entry['rack'],
-                    'bin'         => $entry['bin'],
-                    'is_main_sku' => ! empty($entry['is_main_sku']) ? 1 : 0,
-                ]);
-
-                if ($this->inventory->update((int) $existing['id'], [
-                    'sheet_name'  => $record['sheet_name'],
-                    'rack'        => $record['rack'],
-                    'bin'         => $record['bin'],
-                    'is_main_sku' => $record['is_main_sku'],
-                ])) {
-                    $updated++;
-                    service('activityLog')->logInventoryEdit(
-                        $existing,
-                        $record,
-                        (int) $existing['id'],
-                        $changes,
-                    );
-                    $this->progressLine($prefix . 'updated location.', 'green');
-                } else {
-                    $errors[] = sprintf('Could not update SKU %s.', $sku);
-                    $this->progressLine($prefix . 'failed to update.', 'red');
-                }
-
-                $this->tickReconcileProgress(
-                    $jobId,
                     $scanned,
                     $grandTotal,
                     $entry,
@@ -300,16 +203,134 @@ class InventoryReconcileFromSheetsService
                     $removed,
                     $unchanged,
                     $ignored,
+                    $errors,
+                    $discoveredSheets ?? [],
+                    false,
                 );
+
+                if ($cancelled !== null) {
+                    return $this->finish($cancelled, $dryRun, $logActivity);
+                }
+
+                $scanned++;
+                $sku     = $entry['sku'];
+                $skuKey  = strtoupper($sku);
+                $prefix  = $this->formatProgressPrefix($scanned, $grandTotal, $entry);
+                $existing = $inventoryBySku[$skuKey] ?? null;
+                $forcePoll = false;
+
+                if ($existing === null) {
+                    $cancelled = $this->pollReconcileJob(
+                        $jobId,
+                        $onlySheet,
+                        $sheetCount,
+                        $scanned,
+                        $grandTotal,
+                        $entry,
+                        $added,
+                        $updated,
+                        $removed,
+                        $unchanged,
+                        $ignored,
+                        $errors,
+                        $discoveredSheets ?? [],
+                        true,
+                    );
+
+                    if ($cancelled !== null) {
+                        return $this->finish($cancelled, $dryRun, $logActivity);
+                    }
+
+                    $addedResult = $this->addEntryFromSheet($entry, $syncedAt, $delaySeconds, $dryRun, $prefix, $errors);
+
+                    if ($addedResult === 'added') {
+                        $added++;
+                        $inventoryBySku[$skuKey] = array_merge($entry, [
+                            'sku'        => $sku,
+                            'sheet_name' => $entry['sheet_name'],
+                            'rack'       => $entry['rack'],
+                            'bin'        => $entry['bin'],
+                        ]);
+                    } elseif ($addedResult === 'ignored') {
+                        $ignored++;
+                    }
+
+                    $forcePoll = true;
+                } else {
+                    $changes = $this->detectLocationChanges($existing, $entry);
+
+                    if ($changes === []) {
+                        $unchanged++;
+                    } elseif ($dryRun) {
+                        $updated++;
+                        $forcePoll = true;
+                        $this->progressLine($prefix . 'would update location.', 'yellow');
+                    } else {
+                        $record = array_merge($existing, [
+                            'sheet_name'  => $entry['sheet_name'],
+                            'rack'        => $entry['rack'],
+                            'bin'         => $entry['bin'],
+                            'is_main_sku' => ! empty($entry['is_main_sku']) ? 1 : 0,
+                        ]);
+
+                        if ($this->inventory->update((int) $existing['id'], [
+                            'sheet_name'  => $record['sheet_name'],
+                            'rack'        => $record['rack'],
+                            'bin'         => $record['bin'],
+                            'is_main_sku' => $record['is_main_sku'],
+                        ])) {
+                            $updated++;
+                            $inventoryBySku[$skuKey] = $record;
+                            $forcePoll = true;
+                            service('activityLog')->logInventoryEdit(
+                                $existing,
+                                $record,
+                                (int) $existing['id'],
+                                $changes,
+                            );
+                            $this->progressLine($prefix . 'updated location.', 'green');
+                        } else {
+                            $errors[] = sprintf('Could not update SKU %s.', $sku);
+                            $forcePoll = true;
+                            $this->progressLine($prefix . 'failed to update.', 'red');
+                        }
+                    }
+                }
+
+                $cancelled = $this->pollReconcileJob(
+                    $jobId,
+                    $onlySheet,
+                    $sheetCount,
+                    $scanned,
+                    $grandTotal,
+                    $entry,
+                    $added,
+                    $updated,
+                    $removed,
+                    $unchanged,
+                    $ignored,
+                    $errors,
+                    $discoveredSheets ?? [],
+                    $forcePoll || $scanned >= $grandTotal,
+                );
+
+                if ($cancelled !== null) {
+                    return $this->finish($cancelled, $dryRun, $logActivity);
+                }
             }
         }
 
         foreach ($entriesBySheet as $sheetName => $sheetEntries) {
-            $cancelled = $this->buildCancelledReconcileResult(
+            $sheetName = (string) $sheetName;
+            $entryForPoll = ['sheet_name' => $sheetName];
+
+            $cancelled = $this->pollReconcileJob(
                 $jobId,
                 $onlySheet,
                 $sheetCount,
                 $scanned,
+                $grandTotal,
+                $entryForPoll,
                 $added,
                 $updated,
                 $removed,
@@ -317,13 +338,12 @@ class InventoryReconcileFromSheetsService
                 $ignored,
                 $errors,
                 $discoveredSheets ?? [],
+                true,
             );
 
             if ($cancelled !== null) {
                 return $this->finish($cancelled, $dryRun, $logActivity);
             }
-
-            $sheetName = (string) $sheetName;
 
             if ($jobId !== null) {
                 service('inventoryImportJob')->updateProgress(
@@ -342,17 +362,17 @@ class InventoryReconcileFromSheetsService
                 );
             }
 
-            $dbRows = $this->inventory->findBySheetName($sheetName);
-
-            foreach ($dbRows as $row) {
-                $skuKey = strtoupper(trim((string) ($row['sku'] ?? '')));
+            foreach ($inventoryBySku as $skuKey => $row) {
+                if (strcasecmp((string) ($row['sheet_name'] ?? ''), $sheetName) !== 0) {
+                    continue;
+                }
 
                 if ($skuKey === '' || isset($sheetEntries[$skuKey])) {
                     continue;
                 }
 
                 $sku    = (string) $row['sku'];
-                $rowId  = (int) $row['id'];
+                $rowId  = (int) ($row['id'] ?? 0);
                 $prefix = sprintf(
                     'Sheet "%s" | Rack %s / Bin %s | SKU %s → ',
                     $sheetName,
@@ -363,14 +383,19 @@ class InventoryReconcileFromSheetsService
 
                 if ($dryRun) {
                     $removed++;
+                    unset($inventoryBySku[$skuKey]);
                     $this->progressLine($prefix . 'would remove (not on sheet).', 'yellow');
 
                     continue;
                 }
 
-                if ($this->inventory->delete($rowId)) {
+                if ($rowId > 0 && $this->inventory->delete($rowId)) {
                     $removed++;
+                    unset($inventoryBySku[$skuKey]);
                     $this->progressLine($prefix . 'removed (not on sheet).', 'yellow');
+                } elseif ($rowId <= 0) {
+                    $removed++;
+                    unset($inventoryBySku[$skuKey]);
                 } else {
                     $errors[] = sprintf('Could not remove SKU %s (id %d).', $sku, $rowId);
                     $this->progressLine($prefix . 'failed to remove.', 'red');
@@ -545,6 +570,101 @@ class InventoryReconcileFromSheetsService
         }
 
         return $result;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexInventoryBySku(): array
+    {
+        $index = [];
+
+        foreach ($this->inventory->findAllForQuantitySync() as $row) {
+            $skuKey = strtoupper(trim((string) ($row['sku'] ?? '')));
+
+            if ($skuKey === '' || isset($index[$skuKey])) {
+                continue;
+            }
+
+            $index[$skuKey] = $row;
+        }
+
+        return $index;
+    }
+
+    /**
+     * Check cancel and write job progress at most every 25 SKUs or once per second,
+     * unless $force is true (adds, updates, Net32 lookups, last SKU).
+     *
+     * @param array<string, mixed> $entry
+     * @param list<string> $errors
+     * @param list<string> $discoveredSheets
+     *
+     * @return array<string, mixed>|null
+     */
+    private function pollReconcileJob(
+        ?int $jobId,
+        ?string $onlySheet,
+        int $sheetCount,
+        int $scanned,
+        int $grandTotal,
+        array $entry,
+        int $added,
+        int $updated,
+        int $removed,
+        int $unchanged,
+        int $ignored,
+        array $errors,
+        array $discoveredSheets,
+        bool $force,
+    ): ?array {
+        if ($jobId === null) {
+            return null;
+        }
+
+        $now = microtime(true);
+        $due = $force
+            || ($scanned - $this->lastJobPollScanned) >= self::JOB_POLL_SKU_INTERVAL
+            || ($now - $this->lastJobPollAt) >= self::JOB_POLL_SECONDS;
+
+        if (! $due) {
+            return null;
+        }
+
+        $this->lastJobPollScanned = $scanned;
+        $this->lastJobPollAt      = $now;
+
+        $cancelled = $this->buildCancelledReconcileResult(
+            $jobId,
+            $onlySheet,
+            $sheetCount,
+            $scanned,
+            $added,
+            $updated,
+            $removed,
+            $unchanged,
+            $ignored,
+            $errors,
+            $discoveredSheets,
+        );
+
+        if ($cancelled !== null) {
+            return $cancelled;
+        }
+
+        $this->tickReconcileProgress(
+            $jobId,
+            $scanned,
+            $grandTotal,
+            $entry,
+            $added,
+            $updated,
+            $removed,
+            $unchanged,
+            $ignored,
+        );
+
+        return null;
     }
 
     /**
