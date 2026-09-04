@@ -497,12 +497,35 @@ class BinLocations extends BaseController
                 $order[] = $key;
             }
 
+            $skuKey = strtoupper(trim((string) ($location['sku'] ?? '')));
+            $alreadyInGroup = false;
+
+            if ($skuKey !== '' && $groups[$key]['main'] !== null
+                && strtoupper(trim((string) ($groups[$key]['main']['sku'] ?? ''))) === $skuKey
+            ) {
+                $alreadyInGroup = true;
+            }
+
+            if (! $alreadyInGroup && $skuKey !== '') {
+                foreach ($groups[$key]['alternates'] as $existingAlt) {
+                    if (strtoupper(trim((string) ($existingAlt['sku'] ?? ''))) === $skuKey) {
+                        $alreadyInGroup = true;
+
+                        break;
+                    }
+                }
+            }
+
+            // Same SKU must not appear as both main and sub in one bin.
+            if ($alreadyInGroup) {
+                continue;
+            }
+
             if (! empty($location['is_main_sku'])) {
                 if ($groups[$key]['main'] === null) {
                     $groups[$key]['main'] = $location;
                 } else {
                     // Same bin can have two "main" SKUs (e.g. House Brand + Valdent).
-                    // Keep the first as the group main and still show the rest.
                     $groups[$key]['alternates'][] = $location;
                 }
 

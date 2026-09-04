@@ -384,17 +384,27 @@ class InventoryReconcileFromSheetsService
                 );
             }
 
-            foreach ($inventoryByLocation as $locationKey => $row) {
-                if (strcasecmp((string) ($row['sheet_name'] ?? ''), $sheetName) !== 0) {
-                    continue;
-                }
+            $keptLocationKeys = [];
 
-                if (isset($sheetEntries[$locationKey])) {
+            foreach ($this->inventory->findBySheetName($sheetName) as $row) {
+                $locationKey = $this->locationKey(
+                    (string) ($row['sheet_name'] ?? ''),
+                    (string) ($row['rack'] ?? ''),
+                    (string) ($row['bin'] ?? ''),
+                    (string) ($row['sku'] ?? ''),
+                );
+                $onSheet    = isset($sheetEntries[$locationKey]);
+                $isExtraCopy = $onSheet && isset($keptLocationKeys[$locationKey]);
+
+                if ($onSheet && ! $isExtraCopy) {
+                    $keptLocationKeys[$locationKey] = true;
+
                     continue;
                 }
 
                 $sku    = (string) $row['sku'];
                 $rowId  = (int) ($row['id'] ?? 0);
+                $reason = $isExtraCopy ? 'duplicate in the same bin' : 'not on sheet at this bin';
                 $prefix = sprintf(
                     'Sheet "%s" | Rack %s / Bin %s | SKU %s → ',
                     $sheetName,
@@ -406,7 +416,7 @@ class InventoryReconcileFromSheetsService
                 if ($dryRun) {
                     $removed++;
                     unset($inventoryByLocation[$locationKey]);
-                    $this->progressLine($prefix . 'would remove (not on sheet at this bin).', 'yellow');
+                    $this->progressLine($prefix . 'would remove (' . $reason . ').', 'yellow');
 
                     continue;
                 }
@@ -414,7 +424,7 @@ class InventoryReconcileFromSheetsService
                 if ($rowId > 0 && $this->inventory->delete($rowId)) {
                     $removed++;
                     unset($inventoryByLocation[$locationKey]);
-                    $this->progressLine($prefix . 'removed (not on sheet at this bin).', 'yellow');
+                    $this->progressLine($prefix . 'removed (' . $reason . ').', 'yellow');
                 } elseif ($rowId <= 0) {
                     $removed++;
                     unset($inventoryByLocation[$locationKey]);
