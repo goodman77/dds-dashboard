@@ -407,7 +407,7 @@ class ActivityLogService
      */
     public function updateInventoryImportLog(int $logId, string $status, string $message, array $details = []): void
     {
-        $this->logs->updateEntry($logId, $status, $message, $details);
+        $this->safeUpdateLog($logId, $status, $message, $details);
     }
 
     /**
@@ -415,7 +415,71 @@ class ActivityLogService
      */
     public function updateInventoryReconcileLog(int $logId, string $status, string $message, array $details = []): void
     {
-        $this->logs->updateEntry($logId, $status, $message, $details);
+        $this->safeUpdateLog($logId, $status, $message, $details);
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    private function safeUpdateLog(int $logId, string $status, string $message, array $details = []): void
+    {
+        if ($logId <= 0) {
+            return;
+        }
+
+        $attempts = [
+            $this->slimLogDetails($details),
+            [
+                'job_id'      => $details['job_id'] ?? null,
+                'sheet_name'  => $details['sheet_name'] ?? null,
+                'import_mode' => $details['import_mode'] ?? null,
+            ],
+            null,
+        ];
+
+        foreach ($attempts as $payload) {
+            try {
+                if ($this->logs->updateEntry($logId, $status, $message, $payload)) {
+                    return;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     *
+     * @return array<string, mixed>
+     */
+    public function slimLogDetails(array $details): array
+    {
+        return $this->trimErrorLists($details, 5);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @return array<string, mixed>
+     */
+    private function trimErrorLists(array $data, int $limit): array
+    {
+        if (isset($data['errors']) && is_array($data['errors'])) {
+            $errors = array_values($data['errors']);
+            $data['error_count'] = count($errors);
+            $data['errors']      = array_slice($errors, 0, $limit);
+        }
+
+        foreach (['net32', 'shipstation'] as $key) {
+            if (! isset($data[$key]) || ! is_array($data[$key])) {
+                continue;
+            }
+
+            $data[$key] = $this->trimErrorLists($data[$key], $limit);
+        }
+
+        return $data;
     }
 
     /**
@@ -621,16 +685,16 @@ class ActivityLogService
     }
 
     /**
-     * Fix activity log rows left on running/queued when the linked import job already finished.
+     * Fix activity log rows left on running/queued when the linked import/reconcile job already finished.
      */
     public function reconcileStaleImportLogs(): void
     {
         $db = \Config\Database::connect();
 
         $rows = $db->table('activity_logs al')
-            ->select('al.id AS log_id, j.id AS job_id, j.status AS job_status, j.progress_message, j.result, j.errors, j.sheet_name')
-            ->join('inventory_import_jobs j', 'j.id = al.reference_id AND j.activity_log_id = al.id', 'inner')
-            ->where('al.action', 'inventory_import')
+            ->select('al.id AS log_id, al.action, j.id AS job_id, j.status AS job_status, j.progress_message, j.result, j.errors, j.sheet_name')
+            ->join('inventory_import_jobs j', 'j.id = al.reference_id', 'inner')
+            ->whereIn('al.action', ['inventory_import', 'inventory_reconcile'])
             ->whereIn('al.status', ['running', 'queued'])
             ->whereIn('j.status', ['completed', 'failed', 'cancelled'])
             ->get()
@@ -650,22 +714,33 @@ class ActivityLogService
 
             $jobStatus = (string) $row['job_status'];
             $sheetName = isset($row['sheet_name']) ? (string) $row['sheet_name'] : null;
+            $action    = (string) ($row['action'] ?? 'inventory_import');
+            $isReconcile = $action === 'inventory_reconcile';
 
             if ($jobStatus === 'completed' && is_array($result)) {
-                $message = $this->buildInventoryImportMessage(
-                    array_merge($result, ['sheet_name' => $sheetName]),
-                    $sheetName,
-                );
+                $payload = array_merge($result, ['sheet_name' => $sheetName]);
+                $message = $isReconcile
+                    ? $this->buildInventoryReconcileMessage($payload)
+                    : $this->buildInventoryImportMessage($payload, $sheetName);
+
+                if ($isReconcile && ! empty($result['net32']) && is_array($result['net32'])) {
+                    $message .= ' ' . $this->buildInventoryQtySyncMessage($result['net32']);
+                }
+
+                if ($isReconcile && ! empty($result['shipstation']) && is_array($result['shipstation'])) {
+                    $message .= ' ' . $this->buildInventoryShipStationCheckMessage($result['shipstation']);
+                }
             } else {
-                $message = (string) ($row['progress_message'] ?? 'Import finished.');
+                $message = (string) ($row['progress_message'] ?? ($isReconcile
+                    ? 'Sheet reconcile finished.'
+                    : 'Import finished.'));
             }
 
-            $this->updateInventoryImportLog(
-                (int) $row['log_id'],
-                $jobStatus,
-                $message,
-                $details,
-            );
+            if ($isReconcile) {
+                $this->updateInventoryReconcileLog((int) $row['log_id'], $jobStatus, $message, $details);
+            } else {
+                $this->updateInventoryImportLog((int) $row['log_id'], $jobStatus, $message, $details);
+            }
         }
     }
 

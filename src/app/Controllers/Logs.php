@@ -133,6 +133,20 @@ class Logs extends BaseController
             $entry['is_active']        = (bool) ($jobStatus['is_active'] ?? false);
             $entry['can_cancel']       = (bool) ($jobStatus['can_cancel'] ?? false);
             $entry['cancel_requested'] = (bool) ($jobStatus['cancel_requested'] ?? false);
+
+            $jobState = (string) ($jobStatus['status'] ?? '');
+
+            if (in_array($jobState, ['completed', 'failed', 'cancelled'], true)) {
+                $entry['status']    = $jobState;
+                $entry['is_active'] = false;
+                $entry['can_cancel'] = false;
+
+                $jobMessage = trim((string) ($jobStatus['progress_message'] ?? ''));
+
+                if ($jobMessage !== '') {
+                    $entry['message'] = $jobMessage;
+                }
+            }
         }
 
         unset($entry);

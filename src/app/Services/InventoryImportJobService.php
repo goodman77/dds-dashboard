@@ -183,9 +183,15 @@ class InventoryImportJobService
             }
 
             $jobId     = (int) $job['id'];
-            $logId     = isset($job['activity_log_id']) ? (int) $job['activity_log_id'] : null;
+            $logId     = $this->resolveLogId($job);
             $sheetName = $this->normalizeSheetName($job['sheet_name'] ?? null);
             $mode      = $this->normalizeMode((string) ($job['import_mode'] ?? self::MODE_RECONCILE));
+
+            if ($this->isPipelineWorkFinished($mode, $jobMeta)) {
+                $this->finalizeOrphanedFinishedJob($job, $jobMeta, $logId, $sheetName, $mode);
+
+                continue;
+            }
 
             if (
                 $mode === self::MODE_RECONCILE
@@ -223,7 +229,7 @@ class InventoryImportJobService
                 continue;
             }
 
-            $logId     = isset($job['activity_log_id']) ? (int) $job['activity_log_id'] : null;
+            $logId     = $this->resolveLogId($job);
             $sheetName = $this->normalizeSheetName($job['sheet_name'] ?? null);
 
             $this->forceCancelRunningJob(
@@ -254,7 +260,7 @@ class InventoryImportJobService
             return;
         }
 
-        $logId = isset($job['activity_log_id']) ? (int) $job['activity_log_id'] : null;
+        $logId = $this->resolveLogId($job);
         $sheetName = $this->normalizeSheetName($job['sheet_name'] ?? null);
         $mode      = $this->normalizeMode((string) ($job['import_mode'] ?? self::MODE_RECONCILE));
         $jobMeta   = $this->decodeJsonField($job['result'] ?? null) ?? [];
@@ -375,6 +381,23 @@ class InventoryImportJobService
                 ),
             ]);
 
+            if ($logId !== null && $mode === self::MODE_RECONCILE && $status !== 'failed') {
+                $this->updateJobLog(
+                    $logId,
+                    'running',
+                    $this->buildPostReconcileMessage($sheetName, $withNet32, $withShipStation),
+                    [
+                        'job_id'      => $jobId,
+                        'sheet_name'  => $sheetName,
+                        'import_mode' => $mode,
+                        'added'       => (int) ($result['added'] ?? 0),
+                        'updated'     => (int) ($result['updated'] ?? 0),
+                        'removed'     => (int) ($result['removed'] ?? 0),
+                    ],
+                    $mode,
+                );
+            }
+
             if ($mode === self::MODE_RECONCILE && $status !== 'failed') {
                 if ($withNet32 && ! $this->isCancelRequested($jobId) && empty($jobMeta['net32_completed'])) {
                     $combinedResult['net32'] = $this->runNet32PipelinePhase($jobId, $sheetName);
@@ -477,27 +500,15 @@ class InventoryImportJobService
                 );
             }
 
-            $this->jobs->update($jobId, [
-                'status'           => $status,
-                'progress_message' => $finishMessage,
-                'result'           => $combinedResult,
-                'errors'           => ($combinedResult['errors'] ?? []) !== [] ? array_values($combinedResult['errors']) : null,
-                'finished_at'      => date('Y-m-d H:i:s'),
-            ]);
-
-            if ($logId !== null) {
-                $this->updateJobLog(
-                    $logId,
-                    $status,
-                    $finishMessage,
-                    array_merge($combinedResult, [
-                        'job_id'      => $jobId,
-                        'sheet_name'  => $sheetName,
-                        'import_mode' => $mode,
-                    ]),
-                    $mode,
-                );
-            }
+            $this->markJobFinished(
+                $jobId,
+                $logId,
+                $status,
+                $finishMessage,
+                $combinedResult,
+                $sheetName,
+                $mode,
+            );
 
             service('activityLog')->reconcileStaleImportLogs();
         } catch (\Throwable $exception) {
@@ -529,7 +540,7 @@ class InventoryImportJobService
     ): void {
         $this->jobs->update($jobId, [
             'status'           => 'failed',
-            'progress_message' => $message,
+            'progress_message' => mb_substr($message, 0, 255),
             'errors'           => $errors !== [] ? array_values($errors) : null,
             'finished_at'      => date('Y-m-d H:i:s'),
         ]);
@@ -749,13 +760,177 @@ class InventoryImportJobService
      */
     private function updateJobLog(int $logId, string $status, string $message, array $details, string $mode): void
     {
-        if ($mode === self::MODE_RECONCILE) {
-            service('activityLog')->updateInventoryReconcileLog($logId, $status, $message, $details);
-
+        if ($logId <= 0) {
             return;
         }
 
-        service('activityLog')->updateInventoryImportLog($logId, $status, $message, $details);
+        try {
+            if ($mode === self::MODE_RECONCILE) {
+                service('activityLog')->updateInventoryReconcileLog($logId, $status, $message, $details);
+
+                return;
+            }
+
+            service('activityLog')->updateInventoryImportLog($logId, $status, $message, $details);
+        } catch (\Throwable) {
+            // Job status is the source of truth; a log write must not fail the job.
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function markJobFinished(
+        int $jobId,
+        ?int $logId,
+        string $status,
+        string $message,
+        array $result,
+        ?string $sheetName,
+        string $mode,
+    ): void {
+        $errors = isset($result['errors']) && is_array($result['errors'])
+            ? array_values($result['errors'])
+            : [];
+        $payload = [
+            'status'           => $status,
+            'progress_message' => mb_substr($message, 0, 255),
+            'result'           => $result,
+            'errors'           => $errors !== [] ? $errors : null,
+            'finished_at'      => date('Y-m-d H:i:s'),
+        ];
+
+        try {
+            $this->jobs->update($jobId, $payload);
+        } catch (\Throwable) {
+            $slimResult = service('activityLog')->slimLogDetails($result);
+            $payload['result'] = $slimResult;
+            $payload['errors'] = $errors !== [] ? array_slice($errors, 0, 50) : null;
+            $this->jobs->update($jobId, $payload);
+            $result = $slimResult;
+        }
+
+        if ($logId !== null) {
+            $this->updateJobLog(
+                $logId,
+                $status,
+                $message,
+                array_merge($result, [
+                    'job_id'      => $jobId,
+                    'sheet_name'  => $sheetName,
+                    'import_mode' => $mode,
+                ]),
+                $mode,
+            );
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     */
+    private function resolveLogId(array $job): ?int
+    {
+        $logId = (int) ($job['activity_log_id'] ?? 0);
+
+        if ($logId > 0) {
+            return $logId;
+        }
+
+        $jobId = (int) ($job['id'] ?? 0);
+
+        if ($jobId <= 0) {
+            return null;
+        }
+
+        $mode   = $this->normalizeMode((string) ($job['import_mode'] ?? self::MODE_RECONCILE));
+        $action = $mode === self::MODE_RECONCILE ? 'inventory_reconcile' : 'inventory_import';
+        $row    = \Config\Database::connect()
+            ->table('activity_logs')
+            ->select('id')
+            ->where('reference_id', $jobId)
+            ->where('action', $action)
+            ->orderBy('id', 'DESC')
+            ->get()
+            ->getFirstRow('array');
+
+        if ($row === null) {
+            return null;
+        }
+
+        $foundId = (int) ($row['id'] ?? 0);
+
+        if ($foundId > 0) {
+            $this->jobs->update($jobId, ['activity_log_id' => $foundId]);
+        }
+
+        return $foundId > 0 ? $foundId : null;
+    }
+
+    /**
+     * @param array<string, mixed> $jobMeta
+     */
+    private function isPipelineWorkFinished(string $mode, array $jobMeta): bool
+    {
+        if ($mode !== self::MODE_RECONCILE) {
+            return false;
+        }
+
+        if (empty($jobMeta['reconcile_completed'])) {
+            return false;
+        }
+
+        if (! empty($jobMeta['with_net32']) && empty($jobMeta['net32_completed'])) {
+            return false;
+        }
+
+        if (! empty($jobMeta['with_shipstation']) && empty($jobMeta['shipstation_completed'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $job
+     * @param array<string, mixed> $jobMeta
+     */
+    private function finalizeOrphanedFinishedJob(
+        array $job,
+        array $jobMeta,
+        ?int $logId,
+        ?string $sheetName,
+        string $mode,
+    ): void {
+        $jobId  = (int) $job['id'];
+        $status = ($jobMeta['scanned'] ?? 0) === 0 && ($jobMeta['sheets'] ?? 0) === 0 && ($jobMeta['errors'] ?? []) !== []
+            ? 'failed'
+            : 'completed';
+        $result = array_merge($jobMeta, [
+            'pipeline_phase' => 'completed',
+            'import_mode'    => $mode,
+        ]);
+        $message = $this->buildFinishMessage($result, $sheetName, $mode);
+
+        $this->markJobFinished($jobId, $logId, $status, $message, $result, $sheetName, $mode);
+        service('activityLog')->reconcileStaleImportLogs();
+    }
+
+    private function buildPostReconcileMessage(
+        ?string $sheetName,
+        bool $withNet32,
+        bool $withShipStation,
+    ): string {
+        $scope = service('activityLog')->formatImportSheetLabel($sheetName);
+
+        if ($withNet32) {
+            return sprintf('%s: Sheet reconcile finished. Syncing Net32 quantities...', $scope);
+        }
+
+        if ($withShipStation) {
+            return sprintf('%s: Sheet reconcile finished. Syncing ShipStation locations...', $scope);
+        }
+
+        return sprintf('%s: Sheet reconcile finished. Completing job...', $scope);
     }
 
     public function updateProgress(
@@ -808,7 +983,7 @@ class InventoryImportJobService
             return ['ok' => false, 'message' => 'This import is not active.'];
         }
 
-        $logId     = isset($job['activity_log_id']) ? (int) $job['activity_log_id'] : null;
+        $logId     = $this->resolveLogId($job);
         $sheetName = $this->normalizeSheetName($job['sheet_name'] ?? null);
         $mode      = $this->normalizeMode((string) ($job['import_mode'] ?? self::MODE_RECONCILE));
         $jobLabel  = $mode === self::MODE_RECONCILE ? 'Reconcile' : 'Import';
@@ -935,7 +1110,7 @@ class InventoryImportJobService
     ): void {
         $update = [
             'status'           => 'cancelled',
-            'progress_message' => $message,
+            'progress_message' => mb_substr($message, 0, 255),
             'finished_at'      => date('Y-m-d H:i:s'),
         ];
 
