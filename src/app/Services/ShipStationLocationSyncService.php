@@ -225,36 +225,22 @@ class ShipStationLocationSyncService
             $inventoryRows = $this->shipStationInventory->listInventoryRowsForSku($sku, false);
 
             if ($inventoryRows === []) {
-                return $this->recordObservedState(
+                return $this->createSkuAtExpectedLocation(
                     $id,
                     $sku,
                     $expectedLocation,
-                    null,
-                    null,
-                    0,
-                    false,
-                    null,
-                    true,
-                    sprintf('SKU %s is not in ShipStation. Add it in ShipStation first, then sync the location here.', $sku),
-                    false,
+                    $configuredWarehouseId,
                 );
             }
 
             $syncWarehouseId = $this->shipStationInventory->resolveSyncWarehouseId($sku, $expectedLocation);
 
             if ($syncWarehouseId === null || $syncWarehouseId === '') {
-                return $this->recordObservedState(
+                return $this->createSkuAtExpectedLocation(
                     $id,
                     $sku,
                     $expectedLocation,
-                    null,
-                    null,
-                    0,
-                    false,
-                    null,
-                    true,
-                    sprintf('SKU %s is not in ShipStation. Add it in ShipStation first, then sync the location here.', $sku),
-                    false,
+                    $configuredWarehouseId,
                 );
             }
 
@@ -262,18 +248,11 @@ class ShipStationLocationSyncService
             $sources               = $this->shipStationInventory->listInventoryInWarehouse($sku, $syncWarehouseId);
 
             if ($sources === []) {
-                return $this->recordObservedState(
+                return $this->createSkuAtExpectedLocation(
                     $id,
                     $sku,
                     $expectedLocation,
-                    null,
-                    $this->shipStationInventory->getWarehouseName($syncWarehouseId),
-                    0,
-                    false,
-                    null,
-                    $inConfiguredWarehouse,
-                    sprintf('SKU %s has no on-hand quantity in ShipStation to sync.', $sku),
-                    false,
+                    $configuredWarehouseId,
                 );
             }
 
@@ -401,6 +380,53 @@ class ShipStationLocationSyncService
         } catch (\Throwable $exception) {
             return $this->recordExceptionState($id, $sku, $expectedLocation, $exception);
         }
+    }
+
+    /**
+     * Create the SKU in ShipStation inventory at the sheet bin (latest warehouse).
+     *
+     * @return array<string, mixed>
+     */
+    private function createSkuAtExpectedLocation(
+        int $id,
+        string $sku,
+        string $expectedLocation,
+        string $warehouseId,
+    ): array {
+        $quantity = max(1, (int) config('ShipStation')->defaultPushQuantity);
+        $target   = $this->shipStationInventory->findOrCreateLocationByName($expectedLocation, $warehouseId);
+
+        $this->shipStationInventory->incrementInventoryAtLocation(
+            $target['inventory_location_id'],
+            $sku,
+            $quantity,
+            sprintf('Created SKU %s at %s from DDS dashboard.', $sku, $expectedLocation),
+        );
+
+        $warehouseName = $this->shipStationInventory->getWarehouseName($warehouseId);
+        $message       = sprintf(
+            'Created %s in ShipStation at %s with qty %s.',
+            $sku,
+            $expectedLocation,
+            number_format($quantity),
+        );
+
+        if (! empty($target['created'])) {
+            $message .= sprintf(' Created bin location "%s".', $expectedLocation);
+        }
+
+        return $this->recordSuccessfulMove(
+            $id,
+            $expectedLocation,
+            $target,
+            [
+                'warehouse_id'   => $warehouseId,
+                'warehouse_name' => $warehouseName,
+                'on_hand'        => $quantity,
+            ],
+            $message,
+            true,
+        );
     }
 
     /**
