@@ -115,8 +115,7 @@ class InventoryReconcileFromSheetsService
             $sheetName = (string) $sheetName;
 
             try {
-                $rows    = $this->sheets->fetchSheetRows($sheetName);
-                $entries = $this->parser->parseSkuEntries($sheetName, $rows);
+                $entries = $this->loadEntriesForSheet($sheetName);
                 $this->sheets->rememberSheetName($sheetName);
                 $sheetCount++;
 
@@ -499,7 +498,9 @@ class InventoryReconcileFromSheetsService
             'name'             => $offer['name'],
             'description'      => $offer['description'],
             'quantity'         => $offer['quantity'],
+            'qty_lv'           => $offer['quantity'],
             'sku_net32_exists' => 1,
+            'net32_exists_lv'  => 1,
             'net32_checked_at' => $syncedAt,
             'synced_at'        => $syncedAt,
         ]);
@@ -549,8 +550,14 @@ class InventoryReconcileFromSheetsService
             'name'             => $source['name'] ?? null,
             'description'      => $source['description'] ?? null,
             'quantity'         => (int) ($source['quantity'] ?? 0),
-            'sku_net32_exists' => $source['sku_net32_exists'] ?? 1,
-            'net32_checked_at' => $source['net32_checked_at'] ?? $syncedAt,
+            'qty_lv'           => $source['qty_lv'] ?? ($source['quantity'] ?? 0),
+            'qty_brook'        => $source['qty_brook'] ?? null,
+            'qty_coral'        => $source['qty_coral'] ?? null,
+            'sku_net32_exists'    => $source['sku_net32_exists'] ?? 1,
+            'net32_exists_lv'     => $source['net32_exists_lv'] ?? ($source['sku_net32_exists'] ?? 1),
+            'net32_exists_brook'  => $source['net32_exists_brook'] ?? null,
+            'net32_exists_coral'  => $source['net32_exists_coral'] ?? null,
+            'net32_checked_at'    => $source['net32_checked_at'] ?? $syncedAt,
             'synced_at'        => $syncedAt,
         ]);
 
@@ -618,6 +625,31 @@ class InventoryReconcileFromSheetsService
         }
 
         return $this->sheets->listSheetNamesAscending();
+    }
+
+    /**
+     * @return list<array{sheet_name: string, rack: string, bin: string, sku: string, is_main_sku: bool, sheet_row: int}>
+     */
+    private function loadEntriesForSheet(string $sheetName): array
+    {
+        if ($this->sheets->isWarehouseLogicalSheet($sheetName)) {
+            $entries = [];
+            $logical = $this->sheets->warehouseLogicalSheetName();
+
+            foreach ($this->sheets->listWarehouseTabNames() as $tabName) {
+                $rows = $this->sheets->fetchWarehouseTabRows($tabName);
+                $entries = array_merge(
+                    $entries,
+                    $this->parser->parseWarehouseSkuEntries($logical, $rows),
+                );
+            }
+
+            return $entries;
+        }
+
+        $rows = $this->sheets->fetchSheetRows($sheetName);
+
+        return $this->parser->parseSkuEntries($sheetName, $rows);
     }
 
     /**

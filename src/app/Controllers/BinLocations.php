@@ -6,6 +6,7 @@ namespace App\Controllers;
 
 use App\Models\InventoryModel;
 use App\Services\InventoryImportJobService;
+use App\Services\InventoryQuantitySyncService;
 use App\Services\InventoryShipStationCheckService;
 use CodeIgniter\HTTP\RedirectResponse;
 use CodeIgniter\HTTP\ResponseInterface;
@@ -61,6 +62,7 @@ class BinLocations extends BaseController
             'net32Filter'    => $net32Filter,
             'quantityFilter' => $quantityFilter,
             'shipStationFilter' => $shipStationFilter,
+            'lowStockThreshold' => service('appSettings')->lowStockThreshold(),
             'sheetNames'     => $sheetNames,
             'perPage'        => $perPage,
             'perPageOptions' => self::PER_PAGE_OPTIONS,
@@ -68,6 +70,9 @@ class BinLocations extends BaseController
             'lastNet32QtySyncAt' => $this->bins->getLastNet32CheckedAt(),
             'lastShipStationCheckAt' => $this->bins->getLastShipStationCheckedAt(),
             'spreadsheetUrl' => 'https://docs.google.com/spreadsheets/d/' . config('GoogleSheets')->spreadsheetId,
+            'warehouseSpreadsheetUrl' => trim((string) config('GoogleSheets')->warehouseSpreadsheetId) !== ''
+                ? 'https://docs.google.com/spreadsheets/d/' . config('GoogleSheets')->warehouseSpreadsheetId
+                : null,
             'pager'          => $this->bins->pager,
             'pagerGroup'     => $group,
             'totalLocations' => $this->bins->countAllResults(),
@@ -212,6 +217,9 @@ class BinLocations extends BaseController
             'name'        => (string) ($location['name'] ?? ''),
             'description' => (string) ($location['description'] ?? ''),
             'quantity'    => (int) ($location['quantity'] ?? 0),
+            'qty_lv'      => $this->nullableInt($location['qty_lv'] ?? $location['quantity'] ?? null),
+            'qty_brook'   => $this->nullableInt($location['qty_brook'] ?? null),
+            'qty_coral'   => $this->nullableInt($location['qty_coral'] ?? null),
         ]);
     }
 
@@ -244,6 +252,15 @@ class BinLocations extends BaseController
     public function checkQuantity(int $id): ResponseInterface
     {
         $result = service('inventoryQuantityCheck')->checkRow($id);
+
+        return $this->response
+            ->setStatusCode($result['ok'] ? 200 : 422)
+            ->setJSON($result);
+    }
+
+    public function updateQuantity(int $id): ResponseInterface
+    {
+        $result = $this->bins->updateQuantitiesInline($id, $this->request->getPost());
 
         return $this->response
             ->setStatusCode($result['ok'] ? 200 : 422)
@@ -355,14 +372,14 @@ class BinLocations extends BaseController
         if ($sheetName === '') {
             return redirect()->to($this->inventoryUrl())->with(
                 'error',
-                'Choose a sheet tab for Net32 quantity sync.',
+                'Choose a sheet tab or all sheets for Net32 quantity sync.',
             );
         }
 
-        $dispatch = service('inventoryQtySyncJob')->enqueueForSheet(
-            $sheetName,
-            auth()->loggedIn() ? (int) auth()->id() : null,
-        );
+        $userId = auth()->loggedIn() ? (int) auth()->id() : null;
+        $dispatch = $sheetName === InventoryQuantitySyncService::ALL_SHEETS
+            ? service('inventoryQtySyncJob')->enqueueForAll($userId)
+            : service('inventoryQtySyncJob')->enqueueForSheet($sheetName, $userId);
 
         $redirectQuery = [];
 
@@ -454,7 +471,7 @@ class BinLocations extends BaseController
 
     private function normalizeQuantityFilter(string $filter): ?string
     {
-        return $filter === 'zero' ? 'zero' : null;
+        return in_array($filter, ['zero', 'low'], true) ? $filter : null;
     }
 
     private function normalizeShipStationFilter(string $filter): ?string
@@ -608,5 +625,14 @@ class BinLocations extends BaseController
         }
 
         return $redirect->with('error', $result['message']);
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (int) $value;
     }
 }

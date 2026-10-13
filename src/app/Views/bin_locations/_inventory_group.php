@@ -11,16 +11,17 @@ if ($rowSpan === 0) {
 
 $primaryLocation = $main ?? $alternates[0];
 $hasAlternateRows = $displayAlternates !== [];
+$groupClass = $hasAlternateRows ? ' inventory-has-alts' : '';
 ?>
 <tr
     data-location-id="<?= (int) $primaryLocation['id'] ?>"
-    class="inventory-sku-main inventory-group-start<?= ! $hasAlternateRows ? ' inventory-group-end' : '' ?>"
+    class="inventory-sku-main inventory-group-start<?= $groupClass ?><?= ! $hasAlternateRows ? ' inventory-group-end' : '' ?>"
 >
-    <td rowspan="<?= $rowSpan ?>" class="align-middle bg-body">
+    <td rowspan="<?= $rowSpan ?>" class="align-middle inventory-group-meta inventory-group-rail">
         <span class="badge text-bg-secondary"><?= esc($group['sheet_name']) ?></span>
     </td>
-    <td rowspan="<?= $rowSpan ?>" class="align-middle bg-body"><?= esc($group['rack']) ?></td>
-    <td rowspan="<?= $rowSpan ?>" class="align-middle bg-body"><?= esc($group['bin']) ?></td>
+    <td rowspan="<?= $rowSpan ?>" class="align-middle inventory-group-meta"><?= esc($group['rack']) ?></td>
+    <td rowspan="<?= $rowSpan ?>" class="align-middle inventory-group-meta"><?= esc($group['bin']) ?></td>
     <?php
     $location = $primaryLocation;
     $isAlternate = false;
@@ -32,7 +33,7 @@ $hasAlternateRows = $displayAlternates !== [];
 <?php foreach ($displayAlternates as $index => $location) : ?>
     <tr
         data-location-id="<?= (int) $location['id'] ?>"
-        class="inventory-sku-alt<?= $index === count($displayAlternates) - 1 ? ' inventory-group-end' : '' ?>"
+        class="inventory-sku-alt<?= $groupClass ?><?= $index === count($displayAlternates) - 1 ? ' inventory-group-end' : '' ?>"
     >
         <?php
         $isAlternate = true;

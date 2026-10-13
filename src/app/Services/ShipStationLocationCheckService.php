@@ -154,7 +154,7 @@ class ShipStationLocationCheckService
         }
 
         $sheetName    = strtoupper(trim((string) ($row['sheet_name'] ?? '')));
-        $isWarehouse  = $sheetName === 'X' || str_contains(strtoupper($rack), 'X');
+        $isWarehouse  = in_array($sheetName, ['X', 'WH'], true) || str_contains(strtoupper($rack), 'X');
         $prefix       = $isWarehouse ? 'WH' : 'MR';
         $location     = rtrim(preg_replace('/\s+-\s*$/', '', "$prefix - $rack - $bin") ?? '', ' ');
 

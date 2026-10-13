@@ -28,61 +28,76 @@
         <?php endif ?>
 
         <div class="row">
-            <div class="col-lg-3 col-6">
-                <div class="small-box text-bg-primary">
+            <div class="col-md-6">
+                <a href="<?= site_url('inventory') ?>" class="small-box text-bg-primary text-decoration-none">
                     <div class="inner">
                         <h3><?= esc(number_format($totalRows)) ?></h3>
                         <p>Inventory Rows</p>
                     </div>
-                    <div class="icon"><i class="bi bi-grid-3x3-gap"></i></div>
-                    <a href="<?= site_url('inventory') ?>" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover">
+                    <i class="small-box-icon bi bi-boxes"></i>
+                    <span class="small-box-footer link-light">
                         View inventory <i class="bi bi-arrow-right-circle"></i>
-                    </a>
-                </div>
+                    </span>
+                </a>
             </div>
 
-            <div class="col-lg-3 col-6">
-                <div class="small-box text-bg-success">
+            <div class="col-md-6">
+                <a href="<?= site_url('inventory') ?>" class="small-box text-bg-success text-decoration-none">
                     <div class="inner">
                         <h3><?= esc($sheetCount) ?></h3>
                         <p>Sheet Tabs</p>
                     </div>
-                    <div class="icon"><i class="bi bi-table"></i></div>
-                    <a href="<?= site_url('inventory') ?>" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover">
+                    <i class="small-box-icon bi bi-file-earmark-spreadsheet"></i>
+                    <span class="small-box-footer link-light">
                         View inventory <i class="bi bi-arrow-right-circle"></i>
-                    </a>
-                </div>
-            </div>
-
-            <div class="col-lg-3 col-6">
-                <div class="small-box text-bg-warning">
-                    <div class="inner">
-                        <h3><?= esc(number_format($zeroQuantityCount)) ?></h3>
-                        <p>Quantity 0</p>
-                    </div>
-                    <div class="icon"><i class="bi bi-box"></i></div>
-                    <a href="<?= site_url('inventory?qty=zero') ?>" class="small-box-footer link-dark link-underline-opacity-0 link-underline-opacity-50-hover">
-                        View rows <i class="bi bi-arrow-right-circle"></i>
-                    </a>
-                </div>
-            </div>
-
-            <div class="col-lg-3 col-6">
-                <div class="small-box text-bg-danger">
-                    <div class="inner">
-                        <h3><?= esc(number_format($net32Stats['missing'])) ?></h3>
-                        <p>Not in Net32</p>
-                    </div>
-                    <div class="icon"><i class="bi bi-x-circle"></i></div>
-                    <a href="<?= site_url('inventory?net32=missing') ?>" class="small-box-footer link-light link-underline-opacity-0 link-underline-opacity-50-hover">
-                        View missing <i class="bi bi-arrow-right-circle"></i>
-                    </a>
-                </div>
+                    </span>
+                </a>
             </div>
         </div>
 
         <div class="row">
-            <div class="col-md-6">
+            <div class="col-lg-4 col-md-4">
+                <a href="<?= site_url('inventory?qty=zero') ?>" class="small-box text-bg-warning text-decoration-none">
+                    <div class="inner">
+                        <h3><?= esc(number_format($zeroQuantityCount)) ?></h3>
+                        <p>Net32 Quantity 0</p>
+                    </div>
+                    <i class="small-box-icon bi bi-inbox"></i>
+                    <span class="small-box-footer link-dark">
+                        View rows <i class="bi bi-arrow-right-circle"></i>
+                    </span>
+                </a>
+            </div>
+
+            <div class="col-lg-4 col-md-4">
+                <a href="<?= site_url('inventory?net32=missing') ?>" class="small-box text-bg-danger text-decoration-none">
+                    <div class="inner">
+                        <h3><?= esc(number_format($net32Stats['missing'])) ?></h3>
+                        <p>Net32 Missing in any store</p>
+                    </div>
+                    <i class="small-box-icon bi bi-cloud-slash"></i>
+                    <span class="small-box-footer link-light">
+                        View missing <i class="bi bi-arrow-right-circle"></i>
+                    </span>
+                </a>
+            </div>
+
+            <div class="col-lg-4 col-md-4">
+                <a href="<?= site_url('inventory?qty=low') ?>" class="small-box text-bg-secondary text-decoration-none">
+                    <div class="inner">
+                        <h3><?= esc(number_format($lowStockCount)) ?></h3>
+                        <p>Net32 Low stock (≤<?= esc((string) $lowStockThreshold) ?>)</p>
+                    </div>
+                    <i class="small-box-icon bi bi-graph-down-arrow"></i>
+                    <span class="small-box-footer link-light">
+                        View low stock <i class="bi bi-arrow-right-circle"></i>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-4 col-md-4">
                 <div class="info-box">
                     <span class="info-box-icon text-bg-success"><i class="bi bi-clock-history"></i></span>
                     <div class="info-box-content">
@@ -93,13 +108,24 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-6">
+            <div class="col-lg-4 col-md-4">
                 <div class="info-box">
                     <span class="info-box-icon text-bg-warning"><i class="bi bi-cloud-check"></i></span>
                     <div class="info-box-content">
                         <span class="info-box-text">Last Net32 Qty Sync</span>
                         <span class="info-box-number" style="font-size: 1rem;">
                             <?= $lastNet32Check ? esc(format_log_datetime($lastNet32Check)) : 'Never' ?>
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4 col-md-4">
+                <div class="info-box">
+                    <span class="info-box-icon text-bg-info"><i class="bi bi-geo-alt"></i></span>
+                    <div class="info-box-content">
+                        <span class="info-box-text">Last ShipStation Location Sync</span>
+                        <span class="info-box-number" style="font-size: 1rem;">
+                            <?= $lastShipStationCheck ? esc(format_log_datetime($lastShipStationCheck)) : 'Never' ?>
                         </span>
                     </div>
                 </div>

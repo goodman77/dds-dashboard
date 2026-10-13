@@ -10,20 +10,26 @@ use Config\Net32 as Net32Config;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Promise\PromiseInterface;
 use Psr\Http\Message\ResponseInterface;
 
 class Net32Client
 {
     private Client $http;
 
-    public function __construct(private readonly Net32Config $config)
+    private string $subscriptionKey;
+
+    public function __construct(private readonly Net32Config $config, ?string $subscriptionKey = null)
     {
+        $this->subscriptionKey = $subscriptionKey ?? $this->config->subscriptionKey;
+
         $this->http = new Client([
             'base_uri' => rtrim($this->config->baseURL, '/') . '/',
             'timeout'  => $this->config->timeout,
             'headers'  => [
                 'Accept'                          => 'application/json',
-                $this->config->subscriptionHeader => $this->config->subscriptionKey,
+                $this->config->subscriptionHeader => $this->subscriptionKey,
             ],
         ]);
     }
@@ -35,7 +41,7 @@ class Net32Client
      */
     public function request(string $method, string $uri, array $options = []): array|null
     {
-        if ($this->config->subscriptionKey === '') {
+        if ($this->subscriptionKey === '') {
             throw new Net32ApiException(
                 'Net32 subscription key is not configured. Set net32.subscriptionKey in your .env file.',
                 500,
@@ -96,6 +102,52 @@ class Net32Client
     public function get(string $uri, array $query = []): array|null
     {
         return $this->request('GET', $uri, ['query' => $query]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     *
+     * @return array<string, mixed>|list<mixed>|null
+     */
+    public function requestAsync(string $method, string $uri, array $options = []): PromiseInterface
+    {
+        if ($this->subscriptionKey === '') {
+            return Create::rejectionFor(new Net32ApiException(
+                'Net32 subscription key is not configured. Set net32.subscriptionKey in your .env file.',
+                500,
+            ));
+        }
+
+        return $this->http->requestAsync($method, ltrim($uri, '/'), $options)->then(
+            fn (ResponseInterface $response): array|null => $this->decodeResponse($response),
+            function ($exception) use ($method, $uri, $options) {
+                if ($exception instanceof RequestException) {
+                    $apiException = $this->buildException($exception);
+
+                    if ($apiException->getStatusCode() === 429) {
+                        return $this->request($method, $uri, $options);
+                    }
+
+                    throw $apiException;
+                }
+
+                if ($exception instanceof GuzzleException) {
+                    throw new Net32ApiException($exception->getMessage(), 0, null, $exception);
+                }
+
+                throw $exception instanceof \Throwable
+                    ? $exception
+                    : new Net32ApiException((string) $exception);
+            },
+        );
+    }
+
+    /**
+     * @return PromiseInterface
+     */
+    public function getAsync(string $uri, array $query = []): PromiseInterface
+    {
+        return $this->requestAsync('GET', $uri, ['query' => $query]);
     }
 
     /**

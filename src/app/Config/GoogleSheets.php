@@ -14,6 +14,12 @@ class GoogleSheets extends BaseConfig
     public string $spreadsheetId = '16-5ignJPXAhw07JXOi_JdIlIBdHtPsbpFfV5-xrNW-I';
 
     /**
+     * Bradley WAREHOUSE spreadsheet ID (optional).
+     * When set, tab(s) in warehouseSheetNames are imported as inventory sheet "WH".
+     */
+    public string $warehouseSpreadsheetId = '197Hqv2eWsqJxx_7HI4l2BTsWMMX8qDU8giiwbqM-nDk';
+
+    /**
      * Optional Google API key for listing worksheet tabs via Sheets API v4.
      * The sheet must be shared as "Anyone with the link can view" (or use gviz fallback).
      */
@@ -24,6 +30,16 @@ class GoogleSheets extends BaseConfig
      * Defaults to tabs 1–36, M1–M22, and XM99 from the Bradley BINS workbook.
      */
     public string $sheetNames = '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,M1,M2,M3,M4,M5,M6,M7,M8,M9,M10,M11,M12,M13,M14,M15,M16,M17,M18,M19,M20,M21,M22,X,M99';
+
+    /**
+     * Comma-separated tabs inside the warehouse spreadsheet to import.
+     */
+    public string $warehouseSheetNames = 'ROW A-L';
+
+    /**
+     * Logical inventory sheet_name used for warehouse rows (ShipStation prefix WH).
+     */
+    public string $warehouseInventorySheetName = 'WH';
 
     public int $timeout = 30;
 }

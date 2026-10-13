@@ -19,6 +19,7 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
     $routes->get('inventory/(:num)', 'BinLocations::show/$1');
     $routes->post('inventory/(:num)', 'BinLocations::update/$1');
     $routes->post('inventory/(:num)/check-qty', 'BinLocations::checkQuantity/$1');
+    $routes->post('inventory/(:num)/update-qty', 'BinLocations::updateQuantity/$1');
     $routes->post('inventory/(:num)/check-shipstation', 'BinLocations::checkShipStationLocation/$1');
     $routes->post('inventory/(:num)/sync-shipstation', 'BinLocations::syncShipStationLocation/$1');
     $routes->post('inventory/(:num)/delete', 'BinLocations::destroy/$1');
@@ -37,6 +38,8 @@ $routes->group('', ['filter' => 'session'], static function ($routes) {
     $routes->post('profile', 'Profile::update');
     $routes->post('profile/password', 'Profile::updatePassword');
     $routes->get('reports', static fn () => redirect()->to('/logs'));
+    $routes->get('settings', 'Settings::index');
+    $routes->post('settings', 'Settings::update');
     $routes->get('users', 'Users::index', ['filter' => 'group:admin']);
     $routes->post('users', 'Users::store', ['filter' => 'group:admin']);
     $routes->get('users/(:num)', 'Users::show/$1', ['filter' => 'group:admin']);

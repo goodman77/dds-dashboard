@@ -1,8 +1,12 @@
       <!--begin::Sidebar-->
-      <aside class="app-sidebar bg-body-secondary shadow" data-bs-theme="dark">
+      <aside class="app-sidebar bg-black shadow" data-bs-theme="dark">
         <div class="sidebar-brand">
           <a href="<?= site_url('dashboard') ?>" class="brand-link">
-            <span class="brand-text fw-light">DDS Dashboard</span>
+            <img
+              src="<?= base_url('assets/img/logo.webp') ?>"
+              alt="DDS Dashboard"
+              class="brand-image"
+            >
           </a>
         </div>
 
@@ -25,6 +29,12 @@
                 <a href="<?= site_url('logs') ?>" class="nav-link <?= url_is('logs*') || url_is('reports*') ? 'active' : '' ?>">
                   <i class="nav-icon bi bi-journal-text"></i>
                   <p>Logs</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="<?= site_url('settings') ?>" class="nav-link <?= url_is('settings*') ? 'active' : '' ?>">
+                  <i class="nav-icon bi bi-gear"></i>
+                  <p>Settings</p>
                 </a>
               </li>
               <?php if (auth()->loggedIn() && auth()->user()->inGroup('admin')) : ?>

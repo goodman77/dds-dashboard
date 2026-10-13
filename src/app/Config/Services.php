@@ -11,16 +11,34 @@ class Services extends BaseService
 {
     public static function net32(bool $getShared = true): \App\Libraries\Net32\Net32
     {
-        if ($getShared) {
-            return static::getSharedInstance('net32');
+        return static::net32Store('lv', $getShared);
+    }
+
+    public static function net32Store(string $store = 'lv', bool $getShared = true): \App\Libraries\Net32\Net32
+    {
+        $store = strtolower(trim($store));
+
+        if ($store === '') {
+            $store = 'lv';
+        }
+
+        $cacheKey = 'net32store_' . $store;
+
+        if ($getShared && isset(static::$instances[$cacheKey])) {
+            return static::$instances[$cacheKey];
         }
 
         $config = config('Net32');
-
-        return new \App\Libraries\Net32\Net32(
-            new \App\Libraries\Net32\Net32Client($config),
+        $instance = new \App\Libraries\Net32\Net32(
+            new \App\Libraries\Net32\Net32Client($config, $config->subscriptionKeyFor($store)),
             $config,
         );
+
+        if ($getShared) {
+            static::$instances[$cacheKey] = $instance;
+        }
+
+        return $instance;
     }
 
     public static function googleSheets(bool $getShared = true): \App\Libraries\GoogleSheets\GoogleSheetsClient
@@ -143,7 +161,6 @@ class Services extends BaseService
 
         return new \App\Services\InventoryQuantityCheckService(
             model(\App\Models\InventoryModel::class),
-            static::net32(false)->products(),
         );
     }
 
@@ -203,6 +220,17 @@ class Services extends BaseService
 
         return new \App\Services\ActivityLogService(
             model(\App\Models\ActivityLogModel::class),
+        );
+    }
+
+    public static function appSettings(bool $getShared = true): \App\Services\AppSettingsService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('appSettings');
+        }
+
+        return new \App\Services\AppSettingsService(
+            model(\App\Models\AppSettingModel::class),
         );
     }
 

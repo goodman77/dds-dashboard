@@ -498,21 +498,36 @@ class ActivityLogService
             'name'        => 'Name',
             'description' => 'Description',
             'quantity'    => 'Quantity',
+            'qty_lv'      => 'LV qty',
+            'qty_brook'   => 'Brook qty',
+            'qty_coral'   => 'Coral qty',
             'is_main_sku' => 'Main SKU',
         ];
+
+        if (
+            array_key_exists('qty_lv', $record)
+            || array_key_exists('qty_brook', $record)
+            || array_key_exists('qty_coral', $record)
+        ) {
+            unset($fields['quantity']);
+        }
 
         $changes = [];
 
         foreach ($fields as $key => $label) {
+            if (! array_key_exists($key, $record)) {
+                continue;
+            }
+
             $from = $existing[$key] ?? null;
             $to   = $record[$key] ?? null;
 
             if ($key === 'is_main_sku') {
                 $from = ! empty($from) ? 1 : 0;
                 $to   = ! empty($to) ? 1 : 0;
-            } elseif ($key === 'quantity') {
-                $from = (int) $from;
-                $to   = (int) $to;
+            } elseif (in_array($key, ['quantity', 'qty_lv', 'qty_brook', 'qty_coral'], true)) {
+                $from = $from === null || $from === '' ? null : (int) $from;
+                $to   = $to === null || $to === '' ? null : (int) $to;
             } elseif (in_array($key, ['name', 'description'], true)) {
                 $from = trim((string) ($from ?? '')) !== '' ? trim((string) $from) : null;
                 $to   = trim((string) ($to ?? '')) !== '' ? trim((string) $to) : null;
@@ -643,12 +658,12 @@ class ActivityLogService
             return $change['label'];
         }
 
-        if ($key === 'quantity') {
+        if (in_array($key, ['quantity', 'qty_lv', 'qty_brook', 'qty_coral'], true)) {
             return sprintf(
                 '%s %s → %s',
                 $change['label'],
-                number_format((int) $change['from']),
-                number_format((int) $change['to']),
+                $change['from'] === null ? '—' : number_format((int) $change['from']),
+                $change['to'] === null ? '—' : number_format((int) $change['to']),
             );
         }
 
@@ -669,8 +684,8 @@ class ActivityLogService
             return ! empty($value) ? 'Yes' : 'No';
         }
 
-        if ($field === 'quantity') {
-            return number_format((int) $value);
+        if (in_array($field, ['quantity', 'qty_lv', 'qty_brook', 'qty_coral'], true)) {
+            return $value === null || $value === '' ? '—' : number_format((int) $value);
         }
 
         if ($value === null || $value === '') {

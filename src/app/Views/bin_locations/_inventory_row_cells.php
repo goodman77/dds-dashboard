@@ -3,9 +3,6 @@
 /** @var bool $isAlternate */
 $isAlternate = $isAlternate ?? false;
 $canDelete = $canDelete ?? true;
-$net32Exists = array_key_exists('sku_net32_exists', $location) && $location['sku_net32_exists'] !== null
-    ? (bool) $location['sku_net32_exists']
-    : null;
 $shipStationExists = array_key_exists('shipstation_exists', $location) && $location['shipstation_exists'] !== null
     ? (bool) $location['shipstation_exists']
     : null;
@@ -25,12 +22,34 @@ $inConfiguredWarehouse = service('shipStationLocationCheck')->resolveInConfigure
         <span class="badge text-bg-primary ms-1">Main</span>
     <?php endif ?>
 </td>
-<td class="small"><?= esc($location['name'] ?? '') !== '' ? esc($location['name']) : '—' ?></td>
-<td class="small text-muted"><?= esc($location['description'] ?? '') !== '' ? esc($location['description']) : '—' ?></td>
-<td class="text-end inventory-quantity"><?= esc(number_format((int) ($location['quantity'] ?? 0))) ?></td>
-<td>
+<td class="small inventory-name">
+    <?php
+    $name = trim((string) ($location['name'] ?? ''));
+    ?>
+    <?php if ($name === '') : ?>
+        —
+    <?php else : ?>
+        <span class="inventory-name-text" title="<?= esc($name) ?>"><?= esc($name) ?></span>
+    <?php endif ?>
+</td>
+<?php
+$description = trim((string) ($location['description'] ?? ''));
+?>
+<td class="small text-muted inventory-description">
+    <?php if ($description === '') : ?>
+        —
+    <?php else : ?>
+        <span
+            class="inventory-description-text"
+            data-bs-toggle="tooltip"
+            data-bs-placement="top"
+            data-bs-title="<?= esc($description) ?>"
+        ><?= esc($description) ?></span>
+    <?php endif ?>
+</td>
+<td class="inventory-net32">
     <?= view('bin_locations/_net32_badge', [
-        'exists'         => $net32Exists,
+        'location'       => $location,
         'dataAttributes' => ['data-net32-badge' => 'sku'],
     ]) ?>
 </td>
@@ -44,7 +63,7 @@ $inConfiguredWarehouse = service('shipStationLocationCheck')->resolveInConfigure
         'dataAttributes'        => ['data-shipstation-badge' => 'sku'],
     ]) ?>
 </td>
-<td class="text-end">
+<td class="text-end inventory-actions">
     <div class="d-flex flex-column align-items-end gap-1">
         <div class="btn-group btn-group-sm" role="group" aria-label="Row actions">
             <?php if (! $isAlternate && ! empty($location['is_main_sku'])) : ?>
@@ -65,8 +84,8 @@ $inConfiguredWarehouse = service('shipStationLocationCheck')->resolveInConfigure
                 type="button"
                 class="btn btn-outline-primary check-inventory-qty"
                 data-check-url="<?= esc(site_url('inventory/' . $location['id'] . '/check-qty')) ?>"
-                title="Check quantity in Net32"
-                aria-label="Check quantity in Net32"
+                title="Check quantity in LV, Brook, and Coral"
+                aria-label="Check quantity in LV, Brook, and Coral"
             >
                 <i class="bi bi-arrow-repeat"></i>
             </button>

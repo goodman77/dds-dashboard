@@ -3,6 +3,10 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>DDS Dashboard</title>
 
+    <link rel="icon" href="<?= base_url('favicon.ico') ?>" sizes="any">
+    <link rel="icon" type="image/png" href="<?= base_url('favicon-32.png') ?>" sizes="32x32">
+    <link rel="apple-touch-icon" href="<?= base_url('apple-touch-icon.png') ?>">
+
     <!--begin::Theme Init (prevents flash of incorrect theme on load, #6043)-->
     <script>
       (() => {
@@ -89,6 +93,94 @@
     <link rel="stylesheet"
           href="<?= base_url('assets/adminlte/dist/css/adminlte.min.css') ?>">
     <!--end::Required Plugin(AdminLTE)-->
+
+    <style>
+      :root,
+      [data-bs-theme=light],
+      [data-bs-theme=dark] {
+        --lte-sidebar-width: 230px;
+      }
+
+      .app-sidebar {
+        background-color: #000 !important;
+      }
+
+      .app-sidebar .brand-link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 0.75rem;
+      }
+
+      .app-sidebar .brand-image {
+        display: block;
+        width: auto;
+        max-width: 100%;
+        height: 2.6rem;
+        max-height: 45px !important;
+        object-fit: contain;
+      }
+
+      .sidebar-menu .nav-link p {
+        font-size: 1.17rem; /* ~30% larger than prior 0.9rem */
+      }
+
+      .sidebar-menu .nav-link .nav-icon {
+        font-size: 1.17rem;
+      }
+
+      .user-avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        background: #111;
+        color: #fff;
+        font-size: 1rem;
+        flex-shrink: 0;
+      }
+
+      .user-avatar-lg {
+        width: 2.5rem;
+        height: 2.5rem;
+        font-size: 1.15rem;
+      }
+
+      .user-menu > .nav-link {
+        color: var(--bs-body-color);
+      }
+
+      .user-menu > .nav-link:hover,
+      .user-menu > .nav-link:focus,
+      .user-menu > .nav-link.show {
+        color: var(--bs-body-color);
+      }
+
+      .user-trigger-name {
+        font-size: 0.9rem;
+        font-weight: 500;
+        max-width: 10rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .user-trigger-caret {
+        font-size: 0.7rem;
+        opacity: 0.55;
+      }
+
+      .navbar-nav > .user-menu > .dropdown-menu {
+        width: 260px;
+        margin-top: 0.35rem !important;
+      }
+
+      .user-menu-header {
+        background: var(--bs-tertiary-bg);
+      }
+    </style>
 
     <!-- apexcharts -->
     <link

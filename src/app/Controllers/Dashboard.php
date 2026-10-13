@@ -13,17 +13,21 @@ class Dashboard extends BaseController
     {
         $inventory = model(InventoryModel::class);
         $logs      = model(ActivityLogModel::class);
+        $threshold = service('appSettings')->lowStockThreshold();
 
         return view('dashboard/index', [
-            'title'            => 'Dashboard',
-            'totalRows'        => $inventory->countAllResults(),
-            'zeroQuantityCount'=> $inventory->countZeroQuantity(),
-            'lastSyncedAt'     => $inventory->getLastSyncedAt(),
-            'net32Stats'       => $inventory->getNet32Stats(),
-            'lastNet32Check'   => $inventory->getLastNet32CheckedAt(),
-            'sheetCount'       => count($inventory->getSheetNames()),
-            'recentLogs'       => $logs->getRecent(5),
-            'actionLabels'     => $logs->actionLabels(),
+            'title'             => 'Dashboard',
+            'totalRows'         => $inventory->countAllResults(),
+            'zeroQuantityCount' => $inventory->countZeroQuantity(),
+            'lowStockCount'     => $inventory->countLowStock($threshold),
+            'lowStockThreshold' => $threshold,
+            'lastSyncedAt'      => $inventory->getLastSyncedAt(),
+            'net32Stats'        => $inventory->getNet32Stats(),
+            'lastNet32Check'    => $inventory->getLastNet32CheckedAt(),
+            'lastShipStationCheck' => $inventory->getLastShipStationCheckedAt(),
+            'sheetCount'        => count($inventory->getSheetNames()),
+            'recentLogs'        => $logs->getRecent(5),
+            'actionLabels'      => $logs->actionLabels(),
         ]);
     }
 }

@@ -125,8 +125,7 @@ class InventoryImportService
             }
 
             try {
-                $rows    = $this->sheets->fetchSheetRows($sheetName);
-                $entries = $this->parser->parseSkuEntries($sheetName, $rows);
+                $entries = $this->loadEntriesForSheet($sheetName);
                 $sheetPlans[] = [
                     'sheet'   => $sheetName,
                     'entries' => $entries,
@@ -264,7 +263,9 @@ class InventoryImportService
                     'name'             => $offer['name'],
                     'description'      => $offer['description'],
                     'quantity'         => $offer['quantity'],
+                    'qty_lv'           => $offer['quantity'],
                     'sku_net32_exists' => 1,
+                    'net32_exists_lv'  => 1,
                     'net32_checked_at' => $syncedAt,
                     'synced_at'        => $syncedAt,
                 ]);
@@ -416,6 +417,31 @@ class InventoryImportService
         }
 
         return $this->sheets->listSheetNamesAscending();
+    }
+
+    /**
+     * @return list<array{sheet_name: string, rack: string, bin: string, sku: string, is_main_sku: bool, sheet_row: int}>
+     */
+    private function loadEntriesForSheet(string $sheetName): array
+    {
+        if ($this->sheets->isWarehouseLogicalSheet($sheetName)) {
+            $entries = [];
+            $logical = $this->sheets->warehouseLogicalSheetName();
+
+            foreach ($this->sheets->listWarehouseTabNames() as $tabName) {
+                $rows = $this->sheets->fetchWarehouseTabRows($tabName);
+                $entries = array_merge(
+                    $entries,
+                    $this->parser->parseWarehouseSkuEntries($logical, $rows),
+                );
+            }
+
+            return $entries;
+        }
+
+        $rows = $this->sheets->fetchSheetRows($sheetName);
+
+        return $this->parser->parseSkuEntries($sheetName, $rows);
     }
 
     /**

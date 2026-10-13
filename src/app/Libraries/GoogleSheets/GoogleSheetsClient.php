@@ -20,6 +20,33 @@ class GoogleSheetsClient
         $this->http = new Client(['timeout' => $this->config->timeout]);
     }
 
+    public function warehouseLogicalSheetName(): string
+    {
+        $name = trim($this->config->warehouseInventorySheetName);
+
+        return $name !== '' ? $name : 'WH';
+    }
+
+    public function hasWarehouseSource(): bool
+    {
+        return trim($this->config->warehouseSpreadsheetId) !== ''
+            && $this->configuredWarehouseTabNames() !== [];
+    }
+
+    public function isWarehouseLogicalSheet(string $sheetName): bool
+    {
+        return $this->hasWarehouseSource()
+            && strcasecmp(trim($sheetName), $this->warehouseLogicalSheetName()) === 0;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function listWarehouseTabNames(): array
+    {
+        return $this->configuredWarehouseTabNames();
+    }
+
     /**
      * @return list<string>
      */
@@ -31,7 +58,7 @@ class GoogleSheetsClient
             if ($names !== []) {
                 $this->persistCachedSheetNames($names);
 
-                return self::sortNamesDescending($names);
+                return self::sortNamesDescending($this->withWarehouseLogicalSheet($names));
             }
         }
 
@@ -51,7 +78,7 @@ class GoogleSheetsClient
             if ($names !== []) {
                 $this->persistCachedSheetNames($names);
 
-                return self::sortNamesAscending($names);
+                return self::sortNamesAscending($this->withWarehouseLogicalSheet($names));
             }
         }
 
@@ -121,6 +148,10 @@ class GoogleSheetsClient
             return false;
         }
 
+        if ($this->isWarehouseLogicalSheet($sheetName)) {
+            return true;
+        }
+
         foreach ($this->listSheetNames() as $name) {
             if (strcasecmp($name, $sheetName) === 0) {
                 return true;
@@ -169,9 +200,40 @@ class GoogleSheetsClient
      */
     public function fetchSheetRows(string $sheetName): array
     {
+        return $this->fetchSpreadsheetSheetRows($this->config->spreadsheetId, $sheetName);
+    }
+
+    /**
+     * @return list<list<string|null>>
+     */
+    public function fetchWarehouseTabRows(string $tabName): array
+    {
+        $spreadsheetId = trim($this->config->warehouseSpreadsheetId);
+
+        if ($spreadsheetId === '') {
+            throw new GoogleSheetsException('Warehouse spreadsheet is not configured. Set googleSheets.warehouseSpreadsheetId in .env.');
+        }
+
+        // headers=0 so we keep the raw first row and detect Location/SKU ourselves.
+        return $this->fetchSpreadsheetSheetRows($spreadsheetId, $tabName, false);
+    }
+
+    /**
+     * @return list<list<string|null>>
+     */
+    public function fetchSpreadsheetSheetRows(string $spreadsheetId, string $sheetName, bool $headers = true): array
+    {
+        $spreadsheetId = trim($spreadsheetId);
+        $sheetName     = trim($sheetName);
+
+        if ($spreadsheetId === '' || $sheetName === '') {
+            throw new GoogleSheetsException('Spreadsheet ID and sheet tab name are required.');
+        }
+
         $url = sprintf(
-            'https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:json&headers=1&sheet=%s',
-            rawurlencode($this->config->spreadsheetId),
+            'https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:json&headers=%d&sheet=%s',
+            rawurlencode($spreadsheetId),
+            $headers ? 1 : 0,
             rawurlencode($sheetName),
         );
 
@@ -264,12 +326,36 @@ class GoogleSheetsClient
     /**
      * @return list<string>
      */
+    private function configuredWarehouseTabNames(): array
+    {
+        $names = array_filter(array_map('trim', explode(',', $this->config->warehouseSheetNames)));
+
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * @param list<string> $names
+     *
+     * @return list<string>
+     */
+    private function withWarehouseLogicalSheet(array $names): array
+    {
+        if (! $this->hasWarehouseSource()) {
+            return $names;
+        }
+
+        return array_values(array_unique(array_merge($names, [$this->warehouseLogicalSheetName()])));
+    }
+
+    /**
+     * @return list<string>
+     */
     private function mergedSheetNames(): array
     {
-        return array_values(array_unique(array_merge(
+        return $this->withWarehouseLogicalSheet(array_values(array_unique(array_merge(
             $this->configuredSheetNames(),
             $this->loadCachedSheetNames(),
-        )));
+        ))));
     }
 
     /**

@@ -33,9 +33,21 @@
                                     target="_blank"
                                     rel="noopener"
                                 >
-                                    <i class="bi bi-box-arrow-up-right me-2 text-muted"></i>Open spreadsheet
+                                    <i class="bi bi-box-arrow-up-right me-2 text-muted"></i>Open Bins spreadsheet
                                 </a>
                             </li>
+                            <?php if (! empty($warehouseSpreadsheetUrl)) : ?>
+                            <li>
+                                <a
+                                    class="dropdown-item"
+                                    href="<?= esc($warehouseSpreadsheetUrl) ?>"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    <i class="bi bi-box-arrow-up-right me-2 text-muted"></i>Open Warehouse (WH) spreadsheet
+                                </a>
+                            </li>
+                            <?php endif ?>
                             <li><hr class="dropdown-divider"></li>
                             <li>
                                 <button
@@ -276,7 +288,7 @@
                         <label for="net32" class="form-label small text-muted mb-1">Net32 status</label>
                         <select name="net32" id="net32" class="form-select">
                             <option value="">All rows</option>
-                            <option value="missing" <?= $net32Filter === 'missing' ? 'selected' : '' ?>>Not in Net32</option>
+                            <option value="missing" <?= $net32Filter === 'missing' ? 'selected' : '' ?>>Missing in any store</option>
                             <option value="ok" <?= $net32Filter === 'ok' ? 'selected' : '' ?>>In Net32</option>
                             <option value="unchecked" <?= $net32Filter === 'unchecked' ? 'selected' : '' ?>>Not checked yet</option>
                         </select>
@@ -297,6 +309,9 @@
                         <select name="qty" id="qty" class="form-select">
                             <option value="">All rows</option>
                             <option value="zero" <?= ($quantityFilter ?? '') === 'zero' ? 'selected' : '' ?>>Quantity 0</option>
+                            <option value="low" <?= ($quantityFilter ?? '') === 'low' ? 'selected' : '' ?>>
+                                Low stock (≤<?= esc((string) ($lowStockThreshold ?? 10)) ?> any store)
+                            </option>
                         </select>
                     </div>
                     <div class="col-lg-2 col-md-4">
@@ -331,7 +346,7 @@
                 <div class="table-responsive">
                     <style>
                         .inventory-sku-alt td {
-                            background-color: rgba(0, 0, 0, 0.02);
+                            background-color: rgba(13, 110, 253, 0.03);
                             border-top: none;
                         }
                         .inventory-sku-alt .inventory-sku-indent {
@@ -341,16 +356,172 @@
                         .inventory-sku-alt td:first-child {
                             padding-left: 2.25rem;
                         }
+                        .inventory-has-alts.inventory-sku-main > td {
+                            background-color: rgba(13, 110, 253, 0.04);
+                        }
+                        .inventory-has-alts .inventory-group-meta {
+                            background-color: rgba(13, 110, 253, 0.04);
+                        }
+                        .inventory-has-alts .inventory-group-rail {
+                            border-left: 3px solid #0d6efd;
+                        }
                         .inventory-group-start td {
                             border-bottom: none;
                         }
+                        .inventory-has-alts.inventory-group-start > td {
+                            border-top: 2px solid rgba(13, 110, 253, 0.35);
+                        }
                         .inventory-sku-alt td {
                             border-top: none;
+                            border-bottom: none;
                         }
                         .inventory-group-end td,
                         .inventory-sku-main.inventory-group-start:last-child td,
                         tr.inventory-sku-main.inventory-group-start:only-of-type td {
                             border-bottom-width: 1px;
+                        }
+                        .inventory-has-alts.inventory-group-end > td {
+                            border-bottom: 2px solid rgba(13, 110, 253, 0.35);
+                        }
+                        .inventory-description {
+                            max-width: 10rem;
+                        }
+                        .inventory-description-text {
+                            display: block;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                            cursor: help;
+                        }
+                        .tooltip.inventory-description-tooltip .tooltip-inner {
+                            max-width: 22rem;
+                            text-align: left;
+                        }
+                        .net32-store-chips {
+                            display: inline-flex;
+                            flex-direction: column;
+                            flex-wrap: nowrap;
+                            align-items: stretch;
+                            gap: 0.25rem;
+                            max-width: 100%;
+                            min-width: 7.5rem;
+                        }
+                        .net32-chip {
+                            display: inline-flex;
+                            flex-direction: row;
+                            align-items: center;
+                            justify-content: space-between;
+                            gap: 0.35rem;
+                            width: 100%;
+                            min-width: 0;
+                            min-height: 1.85rem;
+                            padding: 0.22rem 0.5rem;
+                            border: 1px solid transparent;
+                            border-radius: 0.4rem;
+                            line-height: 1.2;
+                            white-space: nowrap;
+                            background: transparent;
+                            font: inherit;
+                            color: inherit;
+                            text-align: left;
+                            box-sizing: border-box;
+                        }
+                        .net32-chip-editable {
+                            cursor: pointer;
+                        }
+                        .net32-chip-editable:hover,
+                        .net32-chip-editable:focus-visible {
+                            border-color: currentColor;
+                            outline: none;
+                            box-shadow: 0 0 0 0.1rem rgba(13, 110, 253, 0.18);
+                        }
+                        .net32-chip-editable:disabled {
+                            cursor: wait;
+                            opacity: 0.7;
+                        }
+                        .net32-chip.is-editing {
+                            padding-top: 0.2rem;
+                            padding-bottom: 0.2rem;
+                        }
+                        .net32-chip-label {
+                            font-size: 0.78rem;
+                            font-weight: 700;
+                            letter-spacing: 0.01em;
+                            text-transform: none;
+                            opacity: 0.8;
+                        }
+                        .net32-chip strong {
+                            font-size: 0.95rem;
+                            font-weight: 700;
+                        }
+                        .net32-chip-input {
+                            width: 4rem;
+                            max-width: 100%;
+                            padding: 0 0.25rem;
+                            border: 1px solid rgba(0, 0, 0, 0.2);
+                            border-radius: 0.25rem;
+                            font-size: 0.95rem;
+                            font-weight: 700;
+                            line-height: 1.2;
+                        }
+                        .net32-chip.is-in {
+                            background: rgba(25, 135, 84, 0.12);
+                            color: #146c43;
+                        }
+                        .net32-chip.is-zero {
+                            background: #fff3cd;
+                            color: #664d03;
+                        }
+                        .net32-chip.is-out {
+                            background: rgba(220, 53, 69, 0.1);
+                            color: #842029;
+                        }
+                        .net32-chip.is-unknown {
+                            background: rgba(108, 117, 125, 0.12);
+                            color: #495057;
+                        }
+                        .net32-chip.is-split {
+                            background: rgba(13, 110, 253, 0.1);
+                            color: #084298;
+                        }
+                        .net32-chip.is-split .net32-chip-label {
+                            opacity: 1;
+                            font-size: 0.95rem;
+                        }
+                        .net32-chip.is-split.is-editing .net32-chip-label {
+                            display: none;
+                        }
+                        td.inventory-net32 {
+                            max-width: 18rem;
+                            white-space: normal;
+                        }
+                        .inventory-name {
+                            max-width: 9rem;
+                        }
+                        .inventory-name-text {
+                            display: block;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                        }
+                        th.inventory-actions,
+                        td.inventory-actions {
+                            position: sticky;
+                            right: 0;
+                            z-index: 2;
+                            width: 11.5rem;
+                            min-width: 11.5rem;
+                            background-color: var(--bs-body-bg, #fff);
+                            box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.18);
+                        }
+                        thead th.inventory-actions {
+                            z-index: 3;
+                        }
+                        .inventory-sku-alt td.inventory-actions {
+                            background-color: color-mix(in srgb, #0d6efd 3%, var(--bs-body-bg, #fff));
+                        }
+                        .inventory-has-alts.inventory-sku-main > td.inventory-actions {
+                            background-color: color-mix(in srgb, #0d6efd 4%, var(--bs-body-bg, #fff));
                         }
                     </style>
                     <table class="table table-hover mb-0 align-middle">
@@ -362,16 +533,15 @@
                                 <th>SKU</th>
                                 <th>Name</th>
                                 <th>Description</th>
-                                <th class="text-end">Qty</th>
                                 <th>Net32</th>
                                 <th>ShipStation</th>
-                                <th class="text-end" style="width: 220px;">Actions</th>
+                                <th class="text-end inventory-actions">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if ($locationGroups === []) : ?>
                                 <tr>
-                                    <td colspan="10" class="text-center text-muted py-4">
+                                    <td colspan="9" class="text-center text-muted py-4">
                                         No inventory rows yet. Click <strong>Import from Google Sheets</strong> or <strong>Add Row</strong>.
                                     </td>
                                 </tr>
@@ -512,11 +682,12 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">Checks every SKU on the selected sheet tab against Net32 and updates local quantities. Runs in the background — progress appears below and on the <a href="<?= site_url('logs') ?>">Logs</a> page.</p>
+                    <p class="text-muted small">Pulls live quantities from <strong>LV, Brook, and Coral</strong> and updates the chips on each SKU. Choose one sheet or all sheets. Runs in the background — progress appears below and on the <a href="<?= site_url('logs') ?>">Logs</a> page.</p>
                     <div class="mb-0">
                         <label for="qty-sync-sheet-name" class="form-label">Sheet tab</label>
                         <select class="form-select" name="sheet_name" id="qty-sync-sheet-name" required>
                             <option value="">Choose a sheet...</option>
+                            <option value="*">All sheets</option>
                             <?php foreach ($sheetNames as $name) : ?>
                                 <option value="<?= esc($name) ?>"><?= esc($name) ?></option>
                             <?php endforeach ?>
@@ -618,9 +789,52 @@
                             <label for="inventory-name" class="form-label">Name</label>
                             <input type="text" class="form-control" id="inventory-name" name="name">
                         </div>
-                        <div class="col-md-4">
-                            <label for="inventory-quantity" class="form-label">Quantity</label>
-                            <input type="number" min="0" class="form-control" id="inventory-quantity" name="quantity" value="0">
+                        <div class="col-md-12">
+                            <label for="inventory-quantity" class="form-label">Quantity (optional — splits 60/20/20)</label>
+                            <input
+                                type="number"
+                                min="0"
+                                class="form-control"
+                                id="inventory-quantity"
+                                name="quantity"
+                                value="0"
+                                placeholder="Leave blank to edit stores below"
+                            >
+                            <div id="inventory-current-store-qtys" class="form-text" hidden></div>
+                            <div class="small text-muted mt-2 mb-1">Or set each store separately:</div>
+                            <div class="row g-2" id="inventory-store-qty-fields">
+                                <div class="col-md-4">
+                                    <label for="inventory-qty-lv" class="form-label small mb-1">LV</label>
+                                    <input type="number" min="0" class="form-control" id="inventory-qty-lv" name="qty_lv" placeholder="—">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="inventory-qty-brook" class="form-label small mb-1">Brook</label>
+                                    <input type="number" min="0" class="form-control" id="inventory-qty-brook" name="qty_brook" placeholder="—">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="inventory-qty-coral" class="form-label small mb-1">Coral</label>
+                                    <input type="number" min="0" class="form-control" id="inventory-qty-coral" name="qty_coral" placeholder="—">
+                                </div>
+                            </div>
+                            <div id="inventory-qty-split-preview" class="inventory-qty-split mt-2">
+                                <div class="d-flex flex-wrap gap-2">
+                                    <span class="net32-chip is-in inventory-split-chip">
+                                        <span class="net32-chip-label">LV</span>
+                                        <strong id="inventory-split-lv">—</strong>
+                                    </span>
+                                    <span class="net32-chip is-in inventory-split-chip">
+                                        <span class="net32-chip-label">Brook</span>
+                                        <strong id="inventory-split-brook">—</strong>
+                                    </span>
+                                    <span class="net32-chip is-in inventory-split-chip">
+                                        <span class="net32-chip-label">Coral</span>
+                                        <strong id="inventory-split-coral">—</strong>
+                                    </span>
+                                </div>
+                                <div id="inventory-qty-split-note" class="form-text mb-0 mt-1">
+                                    Type a total to auto-fill 60/20/20, or edit LV / Brook / Coral one at a time.
+                                </div>
+                            </div>
                         </div>
                         <div class="col-md-12">
                             <label for="inventory-description" class="form-label">Description</label>
@@ -661,6 +875,21 @@ const shipStationCheckJobIdFromUrl = <?= json_encode((int) ($shipStationCheckJob
 const inventoryStoreUrl = <?= json_encode(site_url('inventory')) ?>;
 const inventorySheetNames = <?= json_encode(array_values($sheetNames), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 const ALERT_DISMISS_MS = 20000;
+
+document.addEventListener('DOMContentLoaded', function () {
+    if (typeof bootstrap === 'undefined' || !bootstrap.Tooltip) {
+        return;
+    }
+
+    document.querySelectorAll('.inventory-description-text[data-bs-title]').forEach(function (el) {
+        bootstrap.Tooltip.getOrCreateInstance(el, {
+            container: 'body',
+            placement: 'top',
+            trigger: 'hover focus',
+            customClass: 'inventory-description-tooltip',
+        });
+    });
+});
 
 function dismissAlertElement(el) {
     if (!el || !el.isConnected) {
@@ -712,7 +941,18 @@ window.addEventListener('pageshow', function (event) {
     const nameInput = document.getElementById('inventory-name');
     const descriptionInput = document.getElementById('inventory-description');
     const quantityInput = document.getElementById('inventory-quantity');
+    const qtyLvInput = document.getElementById('inventory-qty-lv');
+    const qtyBrookInput = document.getElementById('inventory-qty-brook');
+    const qtyCoralInput = document.getElementById('inventory-qty-coral');
+    const storeQtyInputs = [qtyLvInput, qtyBrookInput, qtyCoralInput].filter(Boolean);
+    const currentStoreQtys = document.getElementById('inventory-current-store-qtys');
+    const splitPreview = document.getElementById('inventory-qty-split-preview');
+    const splitLv = document.getElementById('inventory-split-lv');
+    const splitBrook = document.getElementById('inventory-split-brook');
+    const splitCoral = document.getElementById('inventory-split-coral');
+    const splitNote = document.getElementById('inventory-qty-split-note');
     const isMainInput = document.getElementById('inventory-is-main-sku');
+    let applyingSplit = false;
     const mainSkuField = document.getElementById('inventory-main-sku-field');
     const alternateContext = document.getElementById('inventory-alternate-context');
     const submitBtn = document.getElementById('inventory-form-submit');
@@ -728,8 +968,140 @@ window.addEventListener('pageshow', function (event) {
     }
 
     function showInventoryModal() {
+        updateSplitPreview();
         bootstrap.Modal.getOrCreateInstance(modalEl).show();
     }
+
+    function formatStoreQty(value) {
+        if (value === null || value === undefined || value === '') {
+            return '—';
+        }
+
+        return Number(value).toLocaleString();
+    }
+
+    function splitQuantity(total) {
+        const n = Math.max(0, parseInt(total, 10) || 0);
+        const brook = Math.round(n * 0.2);
+        const coral = Math.round(n * 0.2);
+
+        return { lv: n - brook - coral, brook, coral };
+    }
+
+    function storeQtyValue(input) {
+        if (!input) {
+            return null;
+        }
+
+        const raw = String(input.value || '').trim();
+
+        return raw === '' ? null : Math.max(0, parseInt(raw, 10) || 0);
+    }
+
+    function setStoreQtyInputs(lv, brook, coral) {
+        applyingSplit = true;
+
+        if (qtyLvInput) qtyLvInput.value = lv === null || lv === undefined || lv === '' ? '' : String(lv);
+        if (qtyBrookInput) qtyBrookInput.value = brook === null || brook === undefined || brook === '' ? '' : String(brook);
+        if (qtyCoralInput) qtyCoralInput.value = coral === null || coral === undefined || coral === '' ? '' : String(coral);
+
+        applyingSplit = false;
+        updateSplitPreview();
+    }
+
+    function setCurrentStoreQtys(data) {
+        if (!currentStoreQtys) {
+            return;
+        }
+
+        if (!data) {
+            currentStoreQtys.hidden = true;
+            currentStoreQtys.textContent = '';
+            return;
+        }
+
+        currentStoreQtys.hidden = false;
+        currentStoreQtys.textContent = 'Current: LV '
+            + formatStoreQty(data.qty_lv)
+            + ' · Brook '
+            + formatStoreQty(data.qty_brook)
+            + ' · Coral '
+            + formatStoreQty(data.qty_coral);
+    }
+
+    function updateSplitPreview() {
+        if (!splitPreview) {
+            return;
+        }
+
+        const totalRaw = quantityInput ? String(quantityInput.value || '').trim() : '';
+        const lv = storeQtyValue(qtyLvInput);
+        const brook = storeQtyValue(qtyBrookInput);
+        const coral = storeQtyValue(qtyCoralInput);
+
+        if (splitLv) splitLv.textContent = lv === null ? '—' : String(lv);
+        if (splitBrook) splitBrook.textContent = brook === null ? '—' : String(brook);
+        if (splitCoral) splitCoral.textContent = coral === null ? '—' : String(coral);
+
+        if (!splitNote) {
+            return;
+        }
+
+        if (totalRaw !== '') {
+            const split = splitQuantity(totalRaw);
+            splitNote.textContent = 'Total '
+                + totalRaw
+                + ' will split to LV '
+                + split.lv
+                + ' · Brook '
+                + split.brook
+                + ' · Coral '
+                + split.coral
+                + '.';
+            return;
+        }
+
+        if (lv === null && brook === null && coral === null) {
+            splitNote.textContent = form.dataset.formMode === 'edit'
+                ? 'Leave store qtys blank to keep current values, or edit only the stores you want to change.'
+                : 'Type a total for 60/20/20, or set LV / Brook / Coral separately.';
+            return;
+        }
+
+        const parts = [];
+        if (lv !== null) parts.push('LV ' + lv);
+        if (brook !== null) parts.push('Brook ' + brook);
+        if (coral !== null) parts.push('Coral ' + coral);
+        splitNote.textContent = 'Will update ' + parts.join(' · ') + ' on save.';
+    }
+
+    if (quantityInput) {
+        quantityInput.addEventListener('input', function () {
+            const raw = String(quantityInput.value || '').trim();
+
+            if (raw === '') {
+                updateSplitPreview();
+                return;
+            }
+
+            const split = splitQuantity(raw);
+            setStoreQtyInputs(split.lv, split.brook, split.coral);
+        });
+    }
+
+    storeQtyInputs.forEach(function (input) {
+        input.addEventListener('input', function () {
+            if (applyingSplit) {
+                return;
+            }
+
+            if (quantityInput && String(quantityInput.value || '').trim() !== '') {
+                quantityInput.value = '';
+            }
+
+            updateSplitPreview();
+        });
+    });
 
     function setLocationFieldsLocked(locked) {
         locationInputs.forEach(function (input) {
@@ -770,6 +1142,8 @@ window.addEventListener('pageshow', function (event) {
         if (nameInput) nameInput.value = '';
         if (descriptionInput) descriptionInput.value = '';
         if (quantityInput) quantityInput.value = '0';
+        setStoreQtyInputs(0, 0, 0);
+        setCurrentStoreQtys(null);
 
         if (isMainInput) {
             isMainInput.checked = true;
@@ -805,6 +1179,8 @@ window.addEventListener('pageshow', function (event) {
         if (nameInput) nameInput.value = '';
         if (descriptionInput) descriptionInput.value = '';
         if (quantityInput) quantityInput.value = '0';
+        setStoreQtyInputs(0, 0, 0);
+        setCurrentStoreQtys(null);
 
         if (isMainInput) {
             isMainInput.checked = false;
@@ -1087,7 +1463,13 @@ window.addEventListener('pageshow', function (event) {
                     if (skuInput) skuInput.value = data.sku || '';
                     if (nameInput) nameInput.value = data.name || '';
                     if (descriptionInput) descriptionInput.value = data.description || '';
-                    if (quantityInput) quantityInput.value = String(data.quantity ?? 0);
+                    if (quantityInput) quantityInput.value = '';
+                    setStoreQtyInputs(
+                        data.qty_lv,
+                        data.qty_brook,
+                        data.qty_coral
+                    );
+                    setCurrentStoreQtys(data);
                     if (isMainInput) isMainInput.checked = !!data.is_main_sku;
 
                     showInventoryModal();
@@ -1104,24 +1486,85 @@ window.addEventListener('pageshow', function (event) {
         return Number(value || 0).toLocaleString();
     }
 
-    function updateNet32Badge(row, exists) {
-        const wrap = row.querySelector('[data-net32-badge="sku"]');
+    function formatStoreQty(value) {
+        if (value === null || value === undefined || value === '') {
+            return '—';
+        }
 
-        if (!wrap) {
-            return;
+        return Number(value).toLocaleString();
+    }
+
+    function net32ExistsClass(exists, qty) {
+        if (exists === false) {
+            return 'is-out';
+        }
+
+        if (qty !== null && qty !== undefined && qty !== '' && Number(qty) === 0) {
+            return 'is-zero';
         }
 
         if (exists === true) {
-            wrap.innerHTML = '<span class="badge text-bg-success">In Net32</span>';
-        } else if (exists === false) {
-            wrap.innerHTML = '<span class="badge text-bg-danger">Not in Net32</span>';
-        } else {
-            wrap.innerHTML = '<span class="badge text-bg-secondary">Not checked</span>';
+            return 'is-in';
         }
+
+        return 'is-unknown';
+    }
+
+    function net32ExistsLabel(exists, qty) {
+        if (exists === false) {
+            return 'not in Net32';
+        }
+
+        if (qty !== null && qty !== undefined && qty !== '' && Number(qty) === 0) {
+            return 'in Net32, qty 0';
+        }
+
+        if (exists === true) {
+            return 'in Net32';
+        }
+
+        return 'not checked';
+    }
+
+    function updateNet32StoreChip(row, store, qty, exists) {
+        const chip = row.querySelector('[data-net32-store="' + store + '"]');
+
+        if (!chip) {
+            return;
+        }
+
+        chip.classList.remove('is-in', 'is-out', 'is-unknown', 'is-zero');
+        chip.classList.add(net32ExistsClass(exists, qty));
+
+        const qtyEl = chip.querySelector('.inventory-qty-' + store);
+        const label = (chip.querySelector('.net32-chip-label')?.textContent || store).trim();
+        const shownQty = exists === false ? null : qty;
+
+        if (qtyEl) {
+            qtyEl.textContent = formatStoreQty(shownQty);
+        }
+
+        if (chip.dataset) {
+            chip.dataset.currentQty = exists === false || shownQty === null || shownQty === undefined || shownQty === ''
+                ? ''
+                : String(Number(shownQty) || 0);
+        }
+
+        chip.title = label + ': ' + net32ExistsLabel(exists, shownQty)
+            + (exists === false || Number(shownQty) === 0 ? '' : ', qty ' + formatStoreQty(shownQty))
+            + ' — click to edit';
+    }
+
+    function updateNet32Badges(row, data) {
+        updateNet32StoreChip(row, 'lv', data.qty_lv, data.net32_exists_lv);
+        updateNet32StoreChip(row, 'brook', data.qty_brook, data.net32_exists_brook);
+        updateNet32StoreChip(row, 'coral', data.qty_coral, data.net32_exists_coral);
     }
 
     function showCheckQtyFeedback(button, message, isError) {
-        const feedback = button.closest('td')?.querySelector('.check-qty-feedback');
+        const row = button?.closest?.('tr') || (button?.nodeType === 1 && button.matches?.('tr') ? button : null);
+        const feedback = row?.querySelector('.check-qty-feedback')
+            || button?.closest?.('td')?.querySelector('.check-qty-feedback');
 
         if (!feedback) {
             return;
@@ -1130,6 +1573,25 @@ window.addEventListener('pageshow', function (event) {
         feedback.hidden = false;
         feedback.className = 'check-qty-feedback small text-end ' + (isError ? 'text-danger' : 'text-success');
         feedback.textContent = message;
+    }
+
+    function showRowProcessing(row, message) {
+        const feedback = row?.querySelector('.check-qty-feedback');
+
+        if (!feedback) {
+            return;
+        }
+
+        feedback.hidden = false;
+        feedback.className = 'check-qty-feedback small text-end text-muted d-inline-flex align-items-center gap-1';
+        feedback.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+            + '<span>' + escapeHtml(message || 'Processing...') + '</span>';
+    }
+
+    function setRowChipsDisabled(row, disabled) {
+        row?.querySelectorAll?.('.net32-chip-editable').forEach(function (chip) {
+            chip.disabled = disabled;
+        });
     }
 
     function updateShipStationBadge(row, data) {
@@ -1319,15 +1781,7 @@ window.addEventListener('pageshow', function (event) {
                 })
                 .then(function (result) {
                     const data = result.data || {};
-                    const quantityCell = row.querySelector('.inventory-quantity');
-
-                    if (quantityCell && typeof data.quantity === 'number') {
-                        quantityCell.textContent = formatQuantity(data.quantity);
-                    }
-
-                    if (typeof data.sku_net32_exists === 'boolean') {
-                        updateNet32Badge(row, data.sku_net32_exists);
-                    }
+                    updateNet32Badges(row, data);
 
                     showCheckQtyFeedback(button, data.message || 'Quantity check finished.', !result.ok);
                 })
@@ -1338,6 +1792,187 @@ window.addEventListener('pageshow', function (event) {
                     button.disabled = false;
                     button.innerHTML = originalHtml;
                 });
+        });
+    });
+
+    let activeChipEdit = null;
+
+    function cancelChipEdit() {
+        if (!activeChipEdit) {
+            return;
+        }
+
+        const { chip, qtyEl, previousText, inputMount, createdQtyEl } = activeChipEdit;
+
+        if (inputMount) {
+            inputMount.remove();
+        }
+
+        if (createdQtyEl && qtyEl) {
+            qtyEl.remove();
+        } else if (qtyEl) {
+            qtyEl.textContent = previousText;
+        }
+
+        chip.classList.remove('is-editing');
+        chip.disabled = false;
+        activeChipEdit = null;
+    }
+
+    function startChipEdit(chip) {
+        if (!chip || chip.disabled || chip.classList.contains('is-editing')) {
+            return;
+        }
+
+        cancelChipEdit();
+
+        const action = chip.dataset.net32Action || 'store';
+        const store = chip.dataset.net32Store || '';
+        const chipsWrap = chip.closest('.net32-store-chips');
+        const updateUrl = chipsWrap?.dataset.qtyUpdateUrl;
+        const row = chip.closest('tr');
+
+        if (!updateUrl || !row) {
+            return;
+        }
+
+        let qtyEl = chip.querySelector('strong');
+        let createdQtyEl = false;
+        let previousText = '';
+
+        if (!qtyEl) {
+            qtyEl = document.createElement('strong');
+            qtyEl.className = action === 'split' ? 'inventory-qty-split' : 'inventory-qty-' + store;
+            chip.appendChild(qtyEl);
+            createdQtyEl = true;
+        } else {
+            previousText = qtyEl.textContent || '';
+        }
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.step = '1';
+        input.className = 'net32-chip-input';
+        input.setAttribute('aria-label', action === 'split'
+            ? 'Total quantity to split 60/20/20'
+            : 'Quantity for ' + ((chip.querySelector('.net32-chip-label')?.textContent || store).trim()));
+
+        if (action === 'split') {
+            input.placeholder = 'Total';
+            input.value = '';
+        } else {
+            const current = chip.dataset.currentQty;
+            input.value = current === undefined || current === null ? '' : String(current);
+        }
+
+        qtyEl.textContent = '';
+        qtyEl.appendChild(input);
+        chip.classList.add('is-editing');
+        activeChipEdit = { chip, qtyEl, previousText, action, store, updateUrl, row, createdQtyEl, inputMount: null };
+        input.focus();
+        input.select();
+
+        function restoreChip() {
+            if (createdQtyEl && qtyEl) {
+                qtyEl.remove();
+            } else if (qtyEl) {
+                qtyEl.textContent = previousText;
+            }
+
+            chip.classList.remove('is-editing');
+            chip.disabled = false;
+        }
+
+        function finish(save) {
+            if (!activeChipEdit || activeChipEdit.chip !== chip) {
+                return;
+            }
+
+            const raw = String(input.value || '').trim();
+            activeChipEdit = null;
+
+            if (!save || raw === '') {
+                restoreChip();
+                return;
+            }
+
+            const qty = Math.max(0, parseInt(raw, 10) || 0);
+            const body = new URLSearchParams();
+
+            if (action === 'split') {
+                body.set('quantity', String(qty));
+            } else {
+                body.set('store', store);
+                body.set('qty', String(qty));
+            }
+
+            chip.disabled = true;
+            input.disabled = true;
+            setRowChipsDisabled(row, true);
+            showRowProcessing(row, 'Processing...');
+
+            fetch(updateUrl, {
+                method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: body.toString(),
+            })
+                .then(function (response) {
+                    return response.json().then(function (data) {
+                        return { ok: response.ok, data: data };
+                    });
+                })
+                .then(function (result) {
+                    const data = result.data || {};
+                    restoreChip();
+                    setRowChipsDisabled(row, false);
+
+                    if (result.ok) {
+                        updateNet32Badges(row, data);
+                    }
+
+                    const feedbackAnchor = row.querySelector('.check-inventory-qty') || chip;
+                    showCheckQtyFeedback(feedbackAnchor, data.message || (result.ok ? 'Quantity updated.' : 'Could not update quantity.'), !result.ok);
+                })
+                .catch(function () {
+                    restoreChip();
+                    setRowChipsDisabled(row, false);
+
+                    const feedbackAnchor = row.querySelector('.check-inventory-qty') || chip;
+                    showCheckQtyFeedback(feedbackAnchor, 'Could not update quantity. Try again.', true);
+                });
+        }
+
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                finish(true);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                finish(false);
+            }
+        });
+
+        input.addEventListener('blur', function () {
+            window.setTimeout(function () {
+                if (activeChipEdit && activeChipEdit.chip === chip) {
+                    finish(false);
+                }
+            }, 120);
+        });
+    }
+
+    document.querySelectorAll('.net32-chip-editable').forEach(function (chip) {
+        chip.addEventListener('click', function (event) {
+            if (event.target.closest('.net32-chip-input')) {
+                return;
+            }
+
+            startChipEdit(chip);
         });
     });
 })();
@@ -1644,6 +2279,20 @@ document.getElementById('shipstation-check-form')?.addEventListener('submit', fu
         }
 
         const filterSelect = document.getElementById('sheet');
+        const currentFilterNames = filterSelect
+            ? Array.from(filterSelect.options)
+                .map(function (option) { return option.value; })
+                .filter(Boolean)
+            : [];
+
+        // Skip DOM rebuild when nothing changed (avoids closing an open select).
+        if (
+            currentFilterNames.length === names.length
+            && currentFilterNames.every(function (name, index) { return name === names[index]; })
+        ) {
+            return;
+        }
+
         const selectedFilter = filterSelect?.value || '';
         const importSelect = document.getElementById('import-sheet-name');
         const selectedImport = importSelect?.value || '';
@@ -1680,7 +2329,7 @@ document.getElementById('shipstation-check-form')?.addEventListener('submit', fu
         }
 
         if (qtySyncSelect) {
-            qtySyncSelect.innerHTML = '<option value="">Choose a sheet...</option>';
+            qtySyncSelect.innerHTML = '<option value="">Choose a sheet...</option><option value="*">All sheets</option>';
             names.forEach(function (name) {
                 const option = document.createElement('option');
                 option.value = name;
@@ -1690,6 +2339,10 @@ document.getElementById('shipstation-check-form')?.addEventListener('submit', fu
                 }
                 qtySyncSelect.appendChild(option);
             });
+
+            if (selectedQtySync === '*') {
+                qtySyncSelect.value = '*';
+            }
         }
 
         if (shipStationCheckSelect) {
@@ -1792,8 +2445,9 @@ document.getElementById('shipstation-check-form')?.addEventListener('submit', fu
 
                 activeJobId = status.job_id;
                 setProgress(status);
-                updateSheetNameSelects(status.sheet_names || inventorySheetNames);
 
+                // Don't rebuild filter dropdowns while the job is running — that
+                // closes an open "Sheet tab" select every poll tick (~2s).
                 if (!status.is_active) {
                     clearInterval(pollTimer);
                     showComplete(status);
